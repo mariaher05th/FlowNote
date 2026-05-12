@@ -1,0 +1,44 @@
+services:
+  db:
+    container_name: flownote_db
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flownote
+      POSTGRES_USER: flow_user
+      POSTGRES_PASSWORD: Pass1234
+      POSTGRES_HOST: localhost
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "flow_user", "-d", "flownote"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    container_name: flownote_backend
+    build:
+      context: ./backend/
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  frontend:
+    container_name: flownote_frontend
+    build:
+      context: ./frontend/
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "5173:5173"
+
+volumes:
+  db_data:
