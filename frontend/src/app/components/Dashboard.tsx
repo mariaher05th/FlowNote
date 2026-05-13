@@ -6,7 +6,7 @@ import { Workflows } from './Workflows';
 import { Team } from './Team';
 import { Reminders } from './Reminders';
 import { Whiteboard } from './Whiteboard';
-
+import React from 'react';
 // ========================================
 // CONFIGURACIÓN DRAG & DROP
 // ========================================
@@ -285,7 +285,7 @@ export function Dashboard() {
     setWidgets(updated);
   };
 
-  const pages: Record<string, JSX.Element> = {
+  const pages: Record<string, React.ReactNode> = {
     inicio:        <HomeContent widgets={widgets} moveWidget={moveWidget} />,
     notas:         <MyNotes />,
     workflows:     <Workflows />,
