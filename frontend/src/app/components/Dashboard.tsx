@@ -244,36 +244,9 @@ function HomeContent({ widgets, moveWidget, onAddClick }: {
       <div style={{ padding: '1.5rem 3rem 0' }}>
         <p style={{ fontSize: '0.9rem', color: '#B0A0C0', fontWeight: 300, margin: '0 0 0.25rem' }}>Bienvenida de vuelta</p>
         <h1 style={{ fontSize: '2rem', fontWeight: 300, color: '#2F2840', letterSpacing: '-0.02em', margin: '0 0 0.5rem' }}>Bienvenida, María</h1>
-        <p style={{ fontSize: '0.875rem', color: '#B0A0C0', fontWeight: 300, margin: '0 0 1rem' }}>3 tareas pendientes hoy · Arrastra los widgets para organizarlos</p>
+        <p style={{ fontSize: '0.875rem', color: '#B0A0C0', fontWeight: 300, margin: '0 0 2rem' }}>3 tareas pendientes hoy · Arrastra los widgets para organizarlos</p>
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '1rem',
-          backgroundColor: '#EDE8F8', borderRadius: '14px',
-          padding: '0.75rem 1.25rem', marginBottom: '2rem',
-          border: '0.5px solid #D8D0EC',
-        }}>
-          {[
-            { initials: 'MJ', role: 'Editor',     border: '#8070C8', bg: '#E0D8F8', color: '#8070C8' },
-            { initials: 'AS', role: 'Revisor',    border: '#C070A0', bg: '#F8D8EC', color: '#C070A0' },
-            { initials: 'TK', role: 'Observador', border: '#7090B8', bg: '#D8ECF8', color: '#7090B8' },
-          ].map(u => (
-            <div key={u.initials} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <div style={{
-                width: '32px', height: '32px', borderRadius: '50%',
-                backgroundColor: u.bg, border: `2px solid ${u.border}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.75rem', fontWeight: 400, color: u.color,
-              }}>{u.initials}</div>
-              <span style={{ fontSize: '0.8125rem', color: '#B0A0C0', fontWeight: 300 }}>{u.role}</span>
-            </div>
-          ))}
-          <button style={{
-            marginLeft: 'auto', backgroundColor: 'transparent',
-            border: '0.5px solid #C8C0E0', borderRadius: '20px',
-            padding: '0.35rem 1rem', fontSize: '0.8125rem',
-            color: '#9080B0', cursor: 'pointer', fontWeight: 300,
-          }}>+ Invitar</button>
-        </div>
+
       </div>
 
       <div style={{ padding: '0 3rem 3rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
@@ -319,7 +292,7 @@ export function Dashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNote, setSelectedNote] = useState(null);
   const [showWidgetModal, setShowWidgetModal] = useState(false);
-  
+
   const addWidget = (widget: typeof initialWidgets[0]) => {
     setWidgets([...widgets, widget]);
     setShowWidgetModal(false);
