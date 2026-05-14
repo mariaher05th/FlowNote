@@ -25,6 +25,16 @@ const initialWidgets = [
   { id: 'notes',     title: 'Nota rápida',   border: '#E4DCF4', accent: '#8070C8' },
 ];
 
+
+const availableWidgets = [
+  { id: 'pending', title: 'Pendientes', border: '#E4DCF4', accent: '#8070C8' },
+  { id: 'projects', title: 'Proyectos', border: '#F0D8EC', accent: '#C070A0' },
+  { id: 'weather', title: 'Clima', border: '#D8ECF8', accent: '#7090B8' },
+  { id: 'maps', title: 'Ubicación', border: '#D8F8EC', accent: '#508070' },
+  { id: 'reminders', title: 'Recordatorios', border: '#F8ECD8', accent: '#A08040' },
+  { id: 'notes', title: 'Nota rápida', border: '#E4DCF4', accent: '#8070C8' },
+];
+
 // Datos mock para widget de tareas pendientes
 const pendingTasks = [
   { id: 1, text: 'Review budget allocations',   status: 'pending' },
@@ -211,9 +221,10 @@ function DraggableWidget({ widget, index, moveWidget }: {
   );
 }
 
-function HomeContent({ widgets, moveWidget }: {
+function HomeContent({ widgets, moveWidget, onAddClick }: {
   widgets: typeof initialWidgets;
   moveWidget: (from: number, to: number) => void;
+  onAddClick: () => void;
 }) {
   return (
     <>
@@ -267,8 +278,36 @@ function HomeContent({ widgets, moveWidget }: {
 
       <div style={{ padding: '0 3rem 3rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
         {widgets.map((widget, index) => (
-          <DraggableWidget key={widget.id} widget={widget} index={index} moveWidget={moveWidget} />
+          <DraggableWidget key={`${widget.id}-${index}`} widget={widget} index={index} moveWidget={moveWidget} />
         ))}
+
+        {/* Widget vacío para agregar */}
+        <button
+          onClick={onAddClick}
+          style={{
+            minHeight: '180px',
+            backgroundColor: '#FFFFFF',
+            border: '2px dashed #C8C0E0',
+            borderRadius: '16px',
+            cursor: 'pointer',
+            color: '#8070C8',
+            fontSize: '2rem',
+            fontWeight: 300,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '0.5rem',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <span style={{ fontSize: '2.5rem' }}>+</span>
+          <span style={{ fontSize: '0.9rem' }}>
+            Agregar widget
+          </span>
+        </button>
+
+
       </div>
     </>
   );
@@ -279,6 +318,12 @@ export function Dashboard() {
   const [activePage, setActivePage] = useState('inicio');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNote, setSelectedNote] = useState(null);
+  const [showWidgetModal, setShowWidgetModal] = useState(false);
+  
+  const addWidget = (widget: typeof initialWidgets[0]) => {
+    setWidgets([...widgets, widget]);
+    setShowWidgetModal(false);
+  };
 
   const moveWidget = (from: number, to: number) => {
     const updated = [...widgets];
@@ -288,7 +333,8 @@ export function Dashboard() {
   };
 
   const pages: Record<string, React.ReactNode> = {
-    inicio:        <HomeContent widgets={widgets} moveWidget={moveWidget} />,
+    inicio:        (<HomeContent widgets={widgets} moveWidget={moveWidget}
+                  onAddClick={() => setShowWidgetModal(true)} />),
     notas:         <MyNotes goToBoard={() => setActivePage('tablero')} />,
     workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
     equipo:        <Team />,
@@ -497,6 +543,95 @@ export function Dashboard() {
         
 
       </div>
+      {showWidgetModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          backgroundColor: 'rgba(47, 40, 64, 0.35)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            backgroundColor: '#FFFFFF',
+            borderRadius: '18px',
+            padding: '2rem',
+            width: '420px',
+            boxShadow: '0 12px 40px rgba(47, 40, 64, 0.18)'
+          }}>
+            <h2 style={{
+              margin: '0 0 0.5rem',
+              fontSize: '1.4rem',
+              fontWeight: 300,
+              color: '#2F2840'
+            }}>
+              Agregar widget
+            </h2>
+
+            <p style={{
+              margin: '0 0 1.5rem',
+              fontSize: '0.875rem',
+              color: '#B0A0C0'
+            }}>
+              Selecciona el tipo de widget que quieres agregar al inicio.
+            </p>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '0.75rem'
+            }}>
+              {availableWidgets.map(widget => (
+                <button
+                  key={widget.id}
+                  onClick={() => addWidget(widget)}
+                  style={{
+                    padding: '1rem',
+                    borderRadius: '14px',
+                    border: `1px solid ${widget.border}`,
+                    backgroundColor: '#F6F4FB',
+                    cursor: 'pointer',
+                    textAlign: 'left'
+                  }}
+                >
+                  <div style={{
+                    width: '10px',
+                    height: '10px',
+                    borderRadius: '50%',
+                    backgroundColor: widget.accent,
+                    marginBottom: '0.75rem'
+                  }} />
+
+                  <span style={{
+                    fontSize: '0.9rem',
+                    color: '#2F2840',
+                    fontWeight: 400
+                  }}>
+                    {widget.title}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setShowWidgetModal(false)}
+              style={{
+                marginTop: '1.5rem',
+                width: '100%',
+                padding: '0.7rem',
+                borderRadius: '20px',
+                border: '1px solid #D8D0EC',
+                backgroundColor: 'transparent',
+                color: '#9080B0',
+                cursor: 'pointer'
+              }}
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </DndProvider>
   );
 }
