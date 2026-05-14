@@ -173,10 +173,11 @@ function WidgetContent({ id }: { id: string }) {
   return null;
 }
 
-function DraggableWidget({ widget, index, moveWidget }: {
+function DraggableWidget({ widget, index, moveWidget, removeWidget}: {
   widget: typeof initialWidgets[0];
   index: number;
   moveWidget: (from: number, to: number) => void;
+  removeWidget: (index: number) => void;
 }) {
   const [{ isDragging }, drag] = useDrag({
     type: WIDGET_TYPE,
@@ -211,19 +212,51 @@ function DraggableWidget({ widget, index, moveWidget }: {
       onMouseLeave={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(128,112,200,0.06)'}
     >
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
         <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 400, color: '#2F2840' }}>
           {widget.title}
         </h3>
         <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: widget.accent }} />
       </div>
+      <button
+        onClick={() => removeWidget(index)}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          cursor: 'pointer',
+          color: '#B0A0C0',
+          fontSize: '1rem',
+          width: '24px',
+          height: '24px',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: '0.15s'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = '#F4F0FC';
+          e.currentTarget.style.color = '#8070C8';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = 'transparent';
+          e.currentTarget.style.color = '#B0A0C0';
+        }}
+      >
+        ✕
+      </button>
+
+    </div>
+
       <WidgetContent id={widget.id} />
     </div>
   );
 }
 
-function HomeContent({ widgets, moveWidget, onAddClick }: {
+function HomeContent({ widgets, moveWidget, removeWidget, onAddClick }: {
   widgets: typeof initialWidgets;
   moveWidget: (from: number, to: number) => void;
+  removeWidget: (index: number) => void;
   onAddClick: () => void;
 }) {
   return (
@@ -251,7 +284,7 @@ function HomeContent({ widgets, moveWidget, onAddClick }: {
 
       <div style={{ padding: '0 3rem 3rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
         {widgets.map((widget, index) => (
-          <DraggableWidget key={`${widget.id}-${index}`} widget={widget} index={index} moveWidget={moveWidget} />
+          <DraggableWidget key={`${widget.id}-${index}`} widget={widget} index={index} moveWidget={moveWidget} removeWidget={removeWidget} />
         ))}
 
         {/* Widget vacío para agregar */}
@@ -305,8 +338,13 @@ export function Dashboard() {
     setWidgets(updated);
   };
 
+  const removeWidget = (index: number) => {
+  const updated = widgets.filter((_, i) => i !== index);
+  setWidgets(updated);
+};
+
   const pages: Record<string, React.ReactNode> = {
-    inicio:        (<HomeContent widgets={widgets} moveWidget={moveWidget}
+    inicio:        (<HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget}
                   onAddClick={() => setShowWidgetModal(true)} />),
     notas:         <MyNotes goToBoard={() => setActivePage('tablero')} />,
     workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
