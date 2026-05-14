@@ -7,7 +7,7 @@ import { Team } from './Team';
 import { Reminders } from './Reminders';
 import { Whiteboard } from './Whiteboard';
 import React from 'react';
-import { Home, StickyNote, Workflow, Bell } from "lucide-react";
+import { Home, StickyNote, Workflow, Bell, Users, LayoutDashboard, ChevronLeft, ChevronRight } from "lucide-react";
 // ========================================
 // CONFIGURACIÓN DRAG & DROP
 // ========================================
@@ -277,6 +277,7 @@ function HomeContent({ widgets, moveWidget }: {
 export function Dashboard() {
   const [widgets, setWidgets] = useState(initialWidgets);
   const [activePage, setActivePage] = useState('inicio');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [selectedNote, setSelectedNote] = useState(null);
 
   const moveWidget = (from: number, to: number) => {
@@ -300,61 +301,148 @@ export function Dashboard() {
       <div style={{ display: 'flex', minHeight: '100vh' }}>
 
         <aside style={{
-          width: '220px', backgroundColor: '#EAE4F8',
+          width: sidebarOpen ? '220px' : '76px',
+          backgroundColor: '#EAE4F8',
           borderRight: '0.5px solid #D8D0EC',
-          display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-          height: '100vh', position: 'sticky', top: 0, flexShrink: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'space-between',
+          height: '100vh',
+          position: 'sticky',
+          top: 0,
+          flexShrink: 0,
+          overflow: 'hidden',
+          transition: 'width 0.3s ease',
         }}>
-          <div style={{ padding: '2.5rem 1.5rem', display: 'flex', flexDirection: 'column', gap: '3rem' }}>
-            <h1 style={{ color: '#8070C8', fontWeight: 300, fontSize: '1.5rem', letterSpacing: '-0.02em', margin: 0 }}>
-              FlowNote
-            </h1>
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+          <div style={{
+            padding: sidebarOpen ? '2.5rem 1.5rem' : '2.5rem 0.75rem',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '3rem',
+            transition: 'padding 0.3s ease',
+          }}>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: sidebarOpen ? 'space-between' : 'center',
+              gap: '0.75rem',
+            }}>
+              {sidebarOpen && (
+                <h1 style={{
+                  color: '#8070C8',
+                  fontWeight: 300,
+                  fontSize: '1.5rem',
+                  letterSpacing: '-0.02em',
+                  margin: 0,
+                  whiteSpace: 'nowrap',
+                }}>
+                  FlowNote
+                </h1>
+              )}
+
+              <button
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                title={sidebarOpen ? 'Cerrar barra lateral' : 'Abrir barra lateral'}
+                style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  border: '0.5px solid #D8D0EC',
+                  backgroundColor: '#E0D8F8',
+                  color: '#8070C8',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                {sidebarOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+              </button>
+            </div>
+
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {[
                 { label: 'Inicio', key: 'inicio', icon: Home },
                 { label: 'Mis Notas', key: 'notas', icon: StickyNote },
                 { label: 'Workflows', key: 'workflows', icon: Workflow },
-                { label: 'Equipo', key: 'equipo', icon: null },
+                { label: 'Equipo', key: 'equipo', icon: Users },
                 { label: 'Recordatorios', key: 'recordatorios', icon: Bell },
-                { label: 'Tablero', key: 'tablero', icon: null },
+                { label: 'Tablero', key: 'tablero', icon: LayoutDashboard },
               ].map(item => {
                 const Icon = item.icon;
 
                 return (
-                  <button key={item.key} onClick={() => setActivePage(item.key)} style={{
-                    padding: '0.625rem 1rem',
-                    borderRadius: '10px',
-                    textAlign: 'left',
-                    backgroundColor: activePage === item.key ? '#E0D8F8' : 'transparent',
-                    color: activePage === item.key ? '#8070C8' : '#9080B0',
-                    fontWeight: activePage === item.key ? 400 : 300,
-                    fontSize: '0.9375rem',
-                    border: 'none',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.7rem',
-                  }}>
+                  <button
+                    key={item.key}
+                    onClick={() => setActivePage(item.key)}
+                    title={!sidebarOpen ? item.label : undefined}
+                    style={{
+                      padding: sidebarOpen ? '0.625rem 1rem' : '0.75rem',
+                      borderRadius: '10px',
+                      textAlign: 'left',
+                      backgroundColor: activePage === item.key ? '#E0D8F8' : 'transparent',
+                      color: activePage === item.key ? '#8070C8' : '#9080B0',
+                      fontWeight: activePage === item.key ? 400 : 300,
+                      fontSize: '0.9375rem',
+                      border: 'none',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: sidebarOpen ? 'flex-start' : 'center',
+                      gap: '0.7rem',
+                      width: '100%',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
                     {Icon && <Icon size={18} strokeWidth={1.8} />}
-                    {item.label}
+                    {sidebarOpen && <span>{item.label}</span>}
                   </button>
                 );
               })}
             </nav>
           </div>
 
-          <div style={{ padding: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{
-              width: '40px', height: '40px', borderRadius: '50%',
-              backgroundColor: '#E0D8F8', border: '2px solid #8070C8',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '0.8125rem', fontWeight: 400, color: '#8070C8', flexShrink: 0,
-            }}>MJ</div>
-            <div>
-              <div style={{ fontSize: '0.9375rem', fontWeight: 400, color: '#2F2840' }}>Maria José</div>
-              <div style={{ fontSize: '0.8125rem', fontWeight: 300, color: '#C070A0' }}>Admin</div>
+          <div style={{
+            padding: sidebarOpen ? '1.5rem' : '1rem 0.75rem',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: sidebarOpen ? 'flex-start' : 'center',
+            gap: '0.75rem',
+            transition: 'all 0.3s ease',
+          }}>
+            <div
+              title={!sidebarOpen ? 'Maria José - Admin' : undefined}
+              style={{
+                width: '40px',
+                height: '40px',
+                borderRadius: '50%',
+                backgroundColor: '#E0D8F8',
+                border: '2px solid #8070C8',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '0.8125rem',
+                fontWeight: 400,
+                color: '#8070C8',
+                flexShrink: 0,
+              }}
+            >
+              MJ
             </div>
+
+            {sidebarOpen && (
+              <div>
+                <div style={{ fontSize: '0.9375rem', fontWeight: 400, color: '#2F2840' }}>
+                  Maria José
+                </div>
+                <div style={{ fontSize: '0.8125rem', fontWeight: 300, color: '#C070A0' }}>
+                  Admin
+                </div>
+              </div>
+            )}
           </div>
         </aside>
 
