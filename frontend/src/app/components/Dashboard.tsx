@@ -7,6 +7,7 @@ import { Team } from './Team';
 import { Reminders } from './Reminders';
 import { Whiteboard } from './Whiteboard';
 import React from 'react';
+import { Home, StickyNote, Workflow, Bell } from "lucide-react";
 // ========================================
 // CONFIGURACIÓN DRAG & DROP
 // ========================================
@@ -310,24 +311,36 @@ export function Dashboard() {
             </h1>
             <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               {[
-                { label: 'Inicio',        key: 'inicio' },
-                { label: 'Mis Notas',     key: 'notas' },
-                { label: 'Workflows',     key: 'workflows' },
-                { label: 'Equipo',        key: 'equipo' },
-                { label: 'Recordatorios', key: 'recordatorios' },
-                { label: 'Tablero', key: 'tablero' },
-              ].map(item => (
-                <button key={item.key} onClick={() => setActivePage(item.key)} style={{
-                  padding: '0.625rem 1rem', borderRadius: '10px', textAlign: 'left',
-                  backgroundColor: activePage === item.key ? '#E0D8F8' : 'transparent',
-                  color: activePage === item.key ? '#8070C8' : '#9080B0',
-                  fontWeight: activePage === item.key ? 400 : 300,
-                  fontSize: '0.9375rem', border: 'none', cursor: 'pointer',
-                  transition: 'background 0.15s',
-                }}>
-                  {item.label}
-                </button>
-              ))}
+                { label: 'Inicio', key: 'inicio', icon: Home },
+                { label: 'Mis Notas', key: 'notas', icon: StickyNote },
+                { label: 'Workflows', key: 'workflows', icon: Workflow },
+                { label: 'Equipo', key: 'equipo', icon: null },
+                { label: 'Recordatorios', key: 'recordatorios', icon: Bell },
+                { label: 'Tablero', key: 'tablero', icon: null },
+              ].map(item => {
+                const Icon = item.icon;
+
+                return (
+                  <button key={item.key} onClick={() => setActivePage(item.key)} style={{
+                    padding: '0.625rem 1rem',
+                    borderRadius: '10px',
+                    textAlign: 'left',
+                    backgroundColor: activePage === item.key ? '#E0D8F8' : 'transparent',
+                    color: activePage === item.key ? '#8070C8' : '#9080B0',
+                    fontWeight: activePage === item.key ? 400 : 300,
+                    fontSize: '0.9375rem',
+                    border: 'none',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.7rem',
+                  }}>
+                    {Icon && <Icon size={18} strokeWidth={1.8} />}
+                    {item.label}
+                  </button>
+                );
+              })}
             </nav>
           </div>
 
