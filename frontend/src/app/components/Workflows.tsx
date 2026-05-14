@@ -1,3 +1,4 @@
+import { Users } from "lucide-react";
 const flows = [
   {
     id: 1, title: 'Proceso de diseño UI', steps: [
@@ -32,7 +33,10 @@ const stepColor: Record<string, { bg: string; color: string; dot: string }> = {
   pending:    { bg: '#F4F0FC', color: '#A090C0', dot: '#C0B0D8' },
 };
 
-export function Workflows() {
+type WorkflowsProps = {
+  goToTeam: () => void;
+};
+export function Workflows({ goToTeam }: WorkflowsProps) {
   return (
     <div style={{ padding: '3rem' }}>
       <h1 style={{ fontSize: '2rem', fontWeight: 300, color: '#2F2840', letterSpacing: '-0.02em', margin: '0 0 0.5rem' }}>Workflows</h1>
@@ -44,8 +48,95 @@ export function Workflows() {
             backgroundColor: '#FFFFFF', border: '0.5px solid #E4DCF4',
             borderRadius: '16px', padding: '1.5rem',
           }}>
-            <h3 style={{ fontSize: '1rem', fontWeight: 400, color: '#2F2840', margin: '0 0 1.25rem' }}>{flow.title}</h3>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              marginBottom: '1.5rem'
+            }}>
 
+              <h3 style={{
+                fontSize: '1rem',
+                fontWeight: 400,
+                color: '#2F2840',
+                margin: 0
+              }}>
+                {flow.title}
+              </h3>
+
+              <div style={{ position: 'relative' }}>
+
+                <button
+                  onClick={goToTeam}
+                  style={{
+                    width: '34px',
+                    height: '34px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    backgroundColor: '#F4F0FC',
+                    color: '#8070C8',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#E8DFFC';
+
+                    const tooltip =
+                      e.currentTarget.parentElement?.querySelector('.tooltip');
+
+                    if (tooltip) {
+                      (tooltip as HTMLElement).style.opacity = '1';
+                      (tooltip as HTMLElement).style.transform =
+                        'translateX(-50%) translateY(0px)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#F4F0FC';
+
+                    const tooltip =
+                      e.currentTarget.parentElement?.querySelector('.tooltip');
+
+                    if (tooltip) {
+                      (tooltip as HTMLElement).style.opacity = '0';
+                      (tooltip as HTMLElement).style.transform =
+                        'translateX(-50%) translateY(5px)';
+                    }
+                  }}
+                >
+                  <Users size={16} strokeWidth={1.8} />
+                </button>
+
+                {/* Tooltip */}
+                <div
+                  className="tooltip"
+                  style={{
+                    position: 'absolute',
+                    top: '42px',
+                    left: '50%',
+                    transform: 'translateX(-50%) translateY(5px)',
+                    backgroundColor: '#2F2840',
+                    color: '#FFFFFF',
+                    fontSize: '0.72rem',
+                    padding: '0.35rem 0.6rem',
+                    borderRadius: '8px',
+                    whiteSpace: 'nowrap',
+                    opacity: 0,
+                    pointerEvents: 'none',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+                    fontWeight: 300,
+                    zIndex: 100
+                  }}
+                >
+                  Ver equipo
+                </div>
+
+              </div>
+
+            </div>
             {/* Steps */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0' }}>
               {flow.steps.map((step, i) => (

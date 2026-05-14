@@ -290,7 +290,7 @@ export function Dashboard() {
   const pages: Record<string, React.ReactNode> = {
     inicio:        <HomeContent widgets={widgets} moveWidget={moveWidget} />,
     notas:         <MyNotes goToBoard={() => setActivePage('tablero')} />,
-    workflows:     <Workflows />,
+    workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
     equipo:        <Team />,
     recordatorios: <Reminders />,
     tablero:       <Whiteboard />,
@@ -367,7 +367,6 @@ export function Dashboard() {
                 { label: 'Inicio', key: 'inicio', icon: Home },
                 { label: 'Mis Notas', key: 'notas', icon: StickyNote },
                 { label: 'Workflows', key: 'workflows', icon: Workflow },
-                { label: 'Equipo', key: 'equipo', icon: Users },
                 { label: 'Recordatorios', key: 'recordatorios', icon: Bell },
               ].map(item => {
                 const Icon = item.icon;
