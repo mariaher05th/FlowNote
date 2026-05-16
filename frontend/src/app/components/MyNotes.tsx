@@ -15,7 +15,7 @@ const statusStyle: Record<string, { bg: string; color: string; label: string }> 
   done:       { bg: '#D8F8EC', color: '#408060', label: 'Completado' },
 };
 
-export function MyNotes({ goToBoard }: { goToBoard: () => void }) {
+export function MyNotes({goToBoard}: {goToBoard: () => void;}) {
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [isCollaborativeMode, setIsCollaborativeMode] = useState(false); // ← NUEVO
@@ -76,14 +76,11 @@ export function MyNotes({ goToBoard }: { goToBoard: () => void }) {
           </button>
         </div>
 
-        <button 
-          onClick={goToBoard}
-          style={{
+        <button onClick={goToBoard} style={{ 
           padding: '0.5rem 1.25rem', borderRadius: '20px', border: 'none', cursor: 'pointer',
           fontSize: '0.8125rem', fontWeight: 400,
           backgroundColor: '#8070C8', color: '#FFFFFF',
-        }}>+ Nueva nota
-        </button>
+        }}>+ Nueva nota</button>
       </div>
 
       {/* ← DASHBOARD COLABORATIVO CUANDO ESTÁ ACTIVO */}

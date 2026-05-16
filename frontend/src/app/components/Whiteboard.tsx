@@ -34,7 +34,7 @@ const initialItems: CanvasItem[] = [
 export function Whiteboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tool, setTool] = useState<Tool>('select');
-  const [items, setItems] = useState<CanvasItem[]>(initialItems);
+  const [items, setItems] = useState<CanvasItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragging, setDragging] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const [drawing, setDrawing] = useState(false);
