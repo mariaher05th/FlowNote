@@ -5,11 +5,16 @@ import {
 import { NotesService } from './notes.service';
 import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { Res } from '@nestjs/common';
+import { Response } from 'express';
+import { ExportService } from './export.service';
+
 
 @UseGuards(JwtAuthGuard)   // Todos los endpoints requieren autenticación
 @Controller('notes')
 export class NotesController {
-  constructor(private readonly notesService: NotesService) {}
+  constructor(private readonly notesService: NotesService, private readonly exportService: ExportService,) {}
+  
 
   // POST /api/notes
   @Post()
@@ -58,4 +63,19 @@ export class NotesController {
   sugerirVinculos(@Param('id') id: string, @Request() req) {
     return this.notesService.sugerirVinculos(id, req.user.sub);
   }
+
+  // GET /api/notes/:id/export/pdf
+  @Get(':id/export/pdf')
+  async exportarPDF(@Param('id') id: string, @Request() req, @Res() res: Response) {
+    const nota = await this.notesService.obtenerUna(id, req.user.sub);
+    this.exportService.exportarPDF(nota.titulo, nota.contenido, res);
+  }
+
+  // GET /api/notes/:id/export/markdown
+  @Get(':id/export/markdown')
+  async exportarMarkdown(@Param('id') id: string, @Request() req, @Res() res: Response) {
+    const nota = await this.notesService.obtenerUna(id, req.user.sub);
+    this.exportService.exportarMarkdown(nota.titulo, nota.contenido, res);
+  }
+
 }

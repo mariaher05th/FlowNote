@@ -17,9 +17,12 @@ const common_1 = require("@nestjs/common");
 const notes_service_1 = require("./notes.service");
 const note_dto_1 = require("./dto/note.dto");
 const jwt_auth_guard_1 = require("../common/guards/jwt-auth.guard");
+const common_2 = require("@nestjs/common");
+const export_service_1 = require("./export.service");
 let NotesController = class NotesController {
-    constructor(notesService) {
+    constructor(notesService, exportService) {
         this.notesService = notesService;
+        this.exportService = exportService;
     }
     crear(dto, req) {
         return this.notesService.crear(dto, req.user.sub);
@@ -44,6 +47,14 @@ let NotesController = class NotesController {
     }
     sugerirVinculos(id, req) {
         return this.notesService.sugerirVinculos(id, req.user.sub);
+    }
+    async exportarPDF(id, req, res) {
+        const nota = await this.notesService.obtenerUna(id, req.user.sub);
+        this.exportService.exportarPDF(nota.titulo, nota.contenido, res);
+    }
+    async exportarMarkdown(id, req, res) {
+        const nota = await this.notesService.obtenerUna(id, req.user.sub);
+        this.exportService.exportarMarkdown(nota.titulo, nota.contenido, res);
     }
 };
 exports.NotesController = NotesController;
@@ -111,9 +122,27 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], NotesController.prototype, "sugerirVinculos", null);
+__decorate([
+    (0, common_1.Get)(':id/export/pdf'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __param(2, (0, common_2.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "exportarPDF", null);
+__decorate([
+    (0, common_1.Get)(':id/export/markdown'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Request)()),
+    __param(2, (0, common_2.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "exportarMarkdown", null);
 exports.NotesController = NotesController = __decorate([
     (0, common_1.UseGuards)(jwt_auth_guard_1.JwtAuthGuard),
     (0, common_1.Controller)('notes'),
-    __metadata("design:paramtypes", [notes_service_1.NotesService])
+    __metadata("design:paramtypes", [notes_service_1.NotesService, export_service_1.ExportService])
 ], NotesController);
 //# sourceMappingURL=notes.controller.js.map

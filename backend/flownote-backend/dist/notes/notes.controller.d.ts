@@ -1,8 +1,11 @@
 import { NotesService } from './notes.service';
 import { CreateNoteDto, UpdateNoteDto } from './dto/note.dto';
+import { Response } from 'express';
+import { ExportService } from './export.service';
 export declare class NotesController {
     private readonly notesService;
-    constructor(notesService: NotesService);
+    private readonly exportService;
+    constructor(notesService: NotesService, exportService: ExportService);
     crear(dto: CreateNoteDto, req: any): Promise<import("./schemas/note.schema").NoteDocument>;
     obtenerMias(req: any): Promise<import("./schemas/note.schema").NoteDocument[]>;
     buscar(q: string, req: any): Promise<import("./schemas/note.schema").NoteDocument[]>;
@@ -13,4 +16,6 @@ export declare class NotesController {
         mensaje: string;
     }>;
     sugerirVinculos(id: string, req: any): Promise<import("./schemas/note.schema").NoteDocument[]>;
+    exportarPDF(id: string, req: any, res: Response): Promise<void>;
+    exportarMarkdown(id: string, req: any, res: Response): Promise<void>;
 }
