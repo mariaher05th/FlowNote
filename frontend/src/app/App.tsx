@@ -1,33 +1,19 @@
-import { useState } from "react";
+import React from 'react';
 import { Dashboard } from './components/Dashboard';
-import Login from "./components/Login";
-import Register from "./components/Register";
+import { AuthPage } from './components/AuthPage';
 
-export default function App() {
-  const [screen, setScreen] = useState("login");
+interface AppProps {
+  page: string;
+}
+
+export default function App({ page }: AppProps) {
+  if (page === 'login' || page === 'register') {
+    return <AuthPage initialView={page as 'login' | 'register'} />;
+  }
+
   return (
     <div style={{ backgroundColor: '#F6F4FB', minHeight: '100vh', color: '#2F2840' }}>
-      
-      {screen === "login" && (
-        <Login
-          onLogin={() => setScreen("dashboard")}
-          goToRegister={() => setScreen("register")}
-        />
-      )}
-
-      {screen === "register" && (
-        <Register
-          onRegister={() => setScreen("dashboard")}
-          goToLogin={() => setScreen("login")}
-        />
-      )}
-
-      {screen === "dashboard" && <Dashboard />}
-
-
-
+      <Dashboard initialPage={page} />
     </div>
   );
 }
-
-
