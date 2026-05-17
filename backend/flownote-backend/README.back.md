@@ -6,52 +6,34 @@ Desarrollado con **NestJS** + **MongoDB** (Mongoose).
 
 ## 🚀 Instalación
 
-```bash
+\```bash
 npm install
 cp .env.example .env   # configurar variables de entorno
 npm run start:dev
-```
+\```
 
 ---
 
 ## 📁 Estructura del proyecto
 
-```
+\```
 src/
 ├── auth/            # Módulo de autenticación (registro, login, JWT)
-│   ├── dto/         # RegisterDto, LoginDto
-│   ├── schemas/     # Schema de Usuario
-│   ├── auth.controller.ts
-│   ├── auth.service.ts
-│   └── auth.module.ts
-├── notes/           # Módulo de notas (CRUD completo)
-│   ├── dto/         # CreateNoteDto, UpdateNoteDto
-│   ├── schemas/     # Schema de Nota
-│   ├── notes.controller.ts
-│   ├── notes.service.ts
-│   └── notes.module.ts
-├── spaces/          # Módulo de espacios colaborativos
-│   ├── dto/         # CreateSpaceDto, InviteMemberDto
-│   ├── schemas/     # Schema de EspacioColaborativo, MiembroEspacio
-│   ├── spaces.controller.ts
-│   ├── spaces.service.ts
-│   └── spaces.module.ts
-├── speech/          # Módulo de Speech-to-Text
-│   ├── dto/         # SpeechDto
-│   ├── speech.controller.ts
-│   ├── speech.service.ts
-│   └── speech.module.ts
+├── notes/           # Módulo de notas (CRUD + exportar PDF/Markdown)
+│   └── export.service.ts
+├── spaces/          # Espacios colaborativos + roles
+├── reminders/       # Recordatorios
+├── comments/        # Comentarios por sección de nota
+├── speech/          # Speech-to-Text (OpenAI Whisper)
 ├── common/
-│   ├── guards/      # JwtAuthGuard, RolesGuard
+│   ├── guards/      # JwtAuthGuard, jwt.strategy
 │   └── decorators/  # @CurrentUser(), @Roles()
 └── app.module.ts
-```
+\```
 
 ---
 
 ## 🛠️ Comandos NestJS CLI
-
-> Siempre correr desde la raíz del proyecto.
 
 | Qué generar | Comando |
 |---|---|
@@ -60,59 +42,88 @@ src/
 | Controlador | `nest g controller nombre` |
 | **Todo junto (recomendado)** | `nest g resource nombre` |
 
-### ¿Qué genera cada uno?
-
 - **Módulos**: inicializan y agrupan los componentes de una funcionalidad.
 - **Servicios**: contienen la lógica de negocio, funciones y métodos.
 - **Controladores**: definen los endpoints REST que usan los servicios.
-- **DTOs** *(Data Transfer Objects)*: definen la forma en que se reciben los datos en ciertos endpoints. Se crean manualmente dentro de la carpeta `dto/` de cada módulo.
-
-### Ejemplo de flujo completo
-
-```bash
-nest g resource notes
-# → genera notes.module.ts, notes.controller.ts, notes.service.ts
-# → luego tú creas src/notes/dto/create-note.dto.ts manualmente
-```
+- **DTOs**: definen la forma en que se reciben los datos en ciertos endpoints. Se crean manualmente dentro de la carpeta `dto/` de cada módulo.
 
 ---
 
 ## 🔐 Variables de entorno (.env)
 
-```env
-MONGODB_URI=mongodb://localhost:27017/flownote
+\```env
+MONGODB_URI=mongodb+srv://usuario:contraseña@cluster.mongodb.net/flownote
 JWT_SECRET=tu_clave_secreta_aqui
 JWT_EXPIRES_IN=7d
 PORT=3000
-```
+OPENAI_API_KEY=sk-...   # opcional, para Speech-to-Text
+\```
 
 ---
 
-## 📦 Dependencias principales
+## 🌐 Endpoints disponibles
 
-```bash
-npm install @nestjs/mongoose mongoose
-npm install @nestjs/jwt @nestjs/passport passport passport-jwt bcryptjs
-npm install @nestjs/config
-npm install multer @types/multer          # para speech-to-text (subida de audio)
-npm install @google-cloud/speech          # opción A: Google Speech-to-Text
-# — O —
-npm install openai                        # opción B: OpenAI Whisper (más fácil)
-```
+### Auth
+\```
+POST   /api/auth/register
+POST   /api/auth/login
+GET    /api/auth/perfil
+\```
 
----
+### Notes
+\```
+POST   /api/notes
+GET    /api/notes
+GET    /api/notes/buscar?q=texto
+GET    /api/notes/estado/:estado
+GET    /api/notes/:id
+PUT    /api/notes/:id
+DELETE /api/notes/:id
+GET    /api/notes/:id/vinculos
+GET    /api/notes/:id/export/pdf
+GET    /api/notes/:id/export/markdown
+\```
 
-## 🎤 Speech-to-Text
+### Spaces
+\```
+POST   /api/spaces
+GET    /api/spaces
+GET    /api/spaces/:id
+POST   /api/spaces/:id/miembros
+PUT    /api/spaces/:id/miembros/:miembroId
+DELETE /api/spaces/:id/miembros/:miembroId
+\```
 
-Se recomienda **OpenAI Whisper** por simplicidad. El endpoint recibe un archivo de audio y devuelve el texto transcrito, que luego puede insertarse en una nota.
+### Reminders
+\```
+POST   /api/reminders
+GET    /api/reminders
+GET    /api/reminders/proximos
+GET    /api/reminders/nota/:notaId
+PUT    /api/reminders/:id
+DELETE /api/reminders/:id
+\```
 
-`POST /speech/transcribe` → devuelve `{ text: "..." }`
+### Comments
+\```
+POST   /api/comments
+GET    /api/comments/nota/:notaId
+PUT    /api/comments/:id
+DELETE /api/comments/:id
+\```
+
+### Speech-to-Text
+\```
+POST   /api/speech/transcribe   # form-data con campo "audio"
+\```
 
 ---
 
 ## 📌 Módulos implementados
 
 - [x] Auth (registro + login + JWT)
-- [x] Notes (CRUD + búsqueda + etiquetas + exportar)
+- [x] Notes (CRUD + búsqueda + etiquetas + vínculos + exportar PDF/Markdown)
 - [x] Spaces (crear espacio + invitar miembros + roles)
-- [x] Speech-to-Text
+- [x] Reminders (recordatorios + próximos)
+- [x] Comments (comentarios por sección de nota)
+- [x] Speech-to-Text (OpenAI Whisper)
