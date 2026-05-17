@@ -15,6 +15,7 @@ const notes_module_1 = require("./notes/notes.module");
 const spaces_module_1 = require("./spaces/spaces.module");
 const speech_module_1 = require("./speech/speech.module");
 const reminders_module_1 = require("./reminders/reminders.module");
+const comments_module_1 = require("./comments/comments.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -28,6 +29,7 @@ exports.AppModule = AppModule = __decorate([
             spaces_module_1.SpacesModule,
             speech_module_1.SpeechModule,
             reminders_module_1.RemindersModule,
+            comments_module_1.CommentsModule,
         ],
     })
 ], AppModule);

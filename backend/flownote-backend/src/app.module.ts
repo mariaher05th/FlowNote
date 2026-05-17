@@ -6,6 +6,7 @@ import { NotesModule } from './notes/notes.module';
 import { SpacesModule } from './spaces/spaces.module';
 import { SpeechModule } from './speech/speech.module';
 import { RemindersModule } from './reminders/reminders.module';
+import { CommentsModule } from './comments/comments.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { RemindersModule } from './reminders/reminders.module';
     SpacesModule,
     SpeechModule,
     RemindersModule,
+    CommentsModule,
   ],
 })
 export class AppModule {}
