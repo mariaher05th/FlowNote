@@ -23,6 +23,18 @@ export class SpacesController {
     return this.spacesService.misEspacios(req.user.sub);
   }
 
+  // GET /api/spaces/:id/notas
+  @Get(':id/notas')
+  notasDelEspacio(@Param('id') id: string, @Request() req) {
+    return this.spacesService.notasDelEspacio(id, req.user.sub);
+  }
+
+  // GET /api/spaces/:id/kanban
+  @Get(':id/kanban')
+  kanbanDelEspacio(@Param('id') id: string, @Request() req) {
+    return this.spacesService.kanbanDelEspacio(id, req.user.sub);
+  }
+
   // GET /api/spaces/:id
   @Get(':id')
   obtenerUno(@Param('id') id: string, @Request() req) {

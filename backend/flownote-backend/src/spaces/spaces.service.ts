@@ -5,10 +5,16 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Space, SpaceDocument } from './schemas/space.schema';
 import { CreateSpaceDto, InviteMemberDto, UpdateMemberRoleDto } from './dto/space.dto';
+import { Note, NoteDocument, NoteEstado } from '../notes/schemas/note.schema';
+
+const ESTADOS: NoteEstado[] = ['pendiente', 'en_progreso', 'completado'];
 
 @Injectable()
 export class SpacesService {
-  constructor(@InjectModel(Space.name) private spaceModel: Model<SpaceDocument>) {}
+  constructor(
+    @InjectModel(Space.name) private spaceModel: Model<SpaceDocument>,
+    @InjectModel(Note.name) private noteModel: Model<NoteDocument>,
+  ) {}
 
   // Crear espacio colaborativo
   async crear(dto: CreateSpaceDto, userId: string): Promise<SpaceDocument> {
@@ -101,5 +107,29 @@ export class SpacesService {
       m => m.usuario_id.toString() !== miembroId,
     );
     return espacio.save();
+  }
+
+  async notasDelEspacio(espacioId: string, userId: string) {
+    await this.obtenerUno(espacioId, userId);
+    return this.noteModel
+      .find({ espacio_id: new Types.ObjectId(espacioId) })
+      .sort({ updatedAt: -1 });
+  }
+
+  async kanbanDelEspacio(espacioId: string, userId: string) {
+    await this.obtenerUno(espacioId, userId);
+    const notas = await this.noteModel
+      .find({ espacio_id: new Types.ObjectId(espacioId) })
+      .sort({ updatedAt: -1 });
+
+    const tablero: Record<NoteEstado, NoteDocument[]> = {
+      pendiente: [],
+      en_progreso: [],
+      completado: [],
+    };
+    for (const nota of notas) {
+      if (ESTADOS.includes(nota.estado)) tablero[nota.estado].push(nota);
+    }
+    return tablero;
   }
 }

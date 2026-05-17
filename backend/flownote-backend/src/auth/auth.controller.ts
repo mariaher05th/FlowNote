@@ -1,6 +1,6 @@
-import { Controller, Post, Get, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, UpdateThemeDto } from './dto/auth.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('auth')
@@ -24,5 +24,11 @@ export class AuthController {
   @Get('perfil')
   perfil(@Request() req) {
     return this.authService.perfil(req.user.sub);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('tema')
+  actualizarTema(@Body() dto: UpdateThemeDto, @Request() req) {
+    return this.authService.actualizarTema(req.user.sub, dto);
   }
 }

@@ -12,11 +12,16 @@ export class CommentsService {
 
   // Crear comentario en una nota
   async crear(dto: CreateCommentDto, userId: string): Promise<CommentDocument> {
+    const inicio = dto.posicion_inicio ?? dto.posicion_char ?? null;
+    const fin = dto.posicion_fin ?? dto.posicion_char ?? null;
+
     return this.commentModel.create({
       usuario_id: new Types.ObjectId(userId),
       nota_id: new Types.ObjectId(dto.nota_id),
       contenido: dto.contenido,
-      posicion_char: dto.posicion_char ?? null,
+      posicion_char: dto.posicion_char ?? inicio,
+      posicion_inicio: inicio,
+      posicion_fin: fin,
     });
   }
 

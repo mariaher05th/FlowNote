@@ -9,7 +9,15 @@ export class CreateCommentDto {
 
   @IsOptional()
   @IsNumber()
-  posicion_char?: number; // posición en el texto donde se hace el comentario
+  posicion_char?: number;
+
+  @IsOptional()
+  @IsNumber()
+  posicion_inicio?: number;
+
+  @IsOptional()
+  @IsNumber()
+  posicion_fin?: number;
 }
 
 export class UpdateCommentDto {

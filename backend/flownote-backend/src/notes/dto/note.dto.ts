@@ -23,6 +23,10 @@ export class CreateNoteDto {
   @IsOptional()
   @IsString()
   espacio_id?: string;
+
+  @IsOptional()
+  @IsString()
+  plantilla_id?: string;
 }
 
 export class UpdateNoteDto {
@@ -45,6 +49,10 @@ export class UpdateNoteDto {
   @IsOptional()
   @IsBoolean()
   es_colaborativa?: boolean;
+
+  @IsOptional()
+  @IsString()
+  espacio_id?: string;
 }
 
 export class SearchNoteDto {

@@ -19,3 +19,8 @@ export class LoginDto {
   @IsString()
   contrasena: string;
 }
+
+export class UpdateThemeDto {
+  @IsString()
+  tema: string;
+}

@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { User, UserDocument } from './schemas/user.schema';
-import { RegisterDto, LoginDto } from './dto/auth.dto';
+import { RegisterDto, LoginDto, UpdateThemeDto } from './dto/auth.dto';
 
 @Injectable()
 export class AuthService {
@@ -31,7 +31,7 @@ export class AuthService {
     return {
       mensaje: `Bienvenido/a, ${usuario.nombre}!`,
       token,
-      usuario: { id: usuario._id, nombre: usuario.nombre, email: usuario.email },
+      usuario: this.mapUsuario(usuario),
     };
   }
 
@@ -49,12 +49,34 @@ export class AuthService {
     const token = this.generarToken(usuario);
     return {
       token,
-      usuario: { id: usuario._id, nombre: usuario.nombre, email: usuario.email },
+      usuario: this.mapUsuario(usuario),
     };
   }
 
   async perfil(userId: string) {
     return this.userModel.findById(userId).select('-contrasena_hash');
+  }
+
+  async actualizarTema(userId: string, dto: UpdateThemeDto) {
+    const temasValidos = ['claro', 'oscuro', 'sistema'];
+    if (!temasValidos.includes(dto.tema)) {
+      throw new ConflictException(`Tema inválido. Usa: ${temasValidos.join(', ')}`);
+    }
+    const usuario = await this.userModel.findByIdAndUpdate(
+      userId,
+      { tema_interfaz: dto.tema },
+      { new: true },
+    ).select('-contrasena_hash');
+    return { mensaje: 'Tema actualizado', usuario };
+  }
+
+  private mapUsuario(usuario: UserDocument) {
+    return {
+      id: usuario._id,
+      nombre: usuario.nombre,
+      email: usuario.email,
+      tema_interfaz: usuario.tema_interfaz,
+    };
   }
 
   private generarToken(usuario: UserDocument) {

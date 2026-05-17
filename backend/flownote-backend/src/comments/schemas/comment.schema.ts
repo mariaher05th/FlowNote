@@ -17,6 +17,12 @@ export class Comment {
   // Posición dentro de la nota (para comentarios en secciones específicas)
   @Prop({ default: null })
   posicion_char: number | null;
+
+  @Prop({ default: null })
+  posicion_inicio: number | null;
+
+  @Prop({ default: null })
+  posicion_fin: number | null;
 }
 
 export const CommentSchema = SchemaFactory.createForClass(Comment);

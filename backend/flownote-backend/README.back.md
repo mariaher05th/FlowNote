@@ -25,9 +25,14 @@ src/
 ├── reminders/       # Recordatorios
 ├── comments/        # Comentarios por sección de nota
 ├── speech/          # Speech-to-Text (OpenAI Whisper)
+├── flows/           # Dashboard de flujos (notas colaborativas)
+├── widgets/         # Widgets incrustables con posición
+├── drawing/         # Capa de dibujo (tableta/ratón)
+├── templates/       # Plantillas reutilizables
 ├── common/
 │   ├── guards/      # JwtAuthGuard, jwt.strategy
-│   └── decorators/  # @CurrentUser(), @Roles()
+│   ├── decorators/  # @CurrentUser(), @Roles()
+│   └── services/    # AccessService (permisos espacios/notas)
 └── app.module.ts
 \```
 
@@ -68,6 +73,7 @@ OPENAI_API_KEY=sk-...   # opcional, para Speech-to-Text
 POST   /api/auth/register
 POST   /api/auth/login
 GET    /api/auth/perfil
+PUT    /api/auth/tema          # body: { "tema": "claro"|"oscuro"|"sistema" }
 \```
 
 ### Notes
@@ -76,6 +82,8 @@ POST   /api/notes
 GET    /api/notes
 GET    /api/notes/buscar?q=texto
 GET    /api/notes/estado/:estado
+GET    /api/notes/kanban?espacio_id=   # tablero completo (3 columnas)
+GET    /api/notes/espacio/:espacioId
 GET    /api/notes/:id
 PUT    /api/notes/:id
 DELETE /api/notes/:id
@@ -89,6 +97,8 @@ GET    /api/notes/:id/export/markdown
 POST   /api/spaces
 GET    /api/spaces
 GET    /api/spaces/:id
+GET    /api/spaces/:id/notas
+GET    /api/spaces/:id/kanban
 POST   /api/spaces/:id/miembros
 PUT    /api/spaces/:id/miembros/:miembroId
 DELETE /api/spaces/:id/miembros/:miembroId
@@ -117,13 +127,50 @@ DELETE /api/comments/:id
 POST   /api/speech/transcribe   # form-data con campo "audio"
 \```
 
+### Flows (dashboard al volverse colaborativa)
+\```
+GET    /api/flows/nota/:notaId
+PUT    /api/flows/nota/:notaId   # body: { nodos, conexiones }
+\```
+
+### Widgets
+\```
+POST   /api/widgets
+GET    /api/widgets/nota/:notaId
+GET    /api/widgets/espacio/:espacioId
+PUT    /api/widgets/:id
+PATCH  /api/widgets/:id/posicion   # drag & drop: { x, y, width?, height?, orden? }
+DELETE /api/widgets/:id
+\```
+
+### Drawing (tableta/ratón)
+\```
+GET    /api/drawing/nota/:notaId
+PUT    /api/drawing/nota/:notaId   # guardar todos los trazos
+POST   /api/drawing/nota/:notaId/trazo
+DELETE /api/drawing/nota/:notaId
+\```
+
+### Templates
+\```
+GET    /api/templates
+GET    /api/templates/:id
+POST   /api/templates
+PUT    /api/templates/:id
+DELETE /api/templates/:id
+\```
+
 ---
 
 ## 📌 Módulos implementados
 
-- [x] Auth (registro + login + JWT)
-- [x] Notes (CRUD + búsqueda + etiquetas + vínculos + exportar PDF/Markdown)
-- [x] Spaces (crear espacio + invitar miembros + roles)
-- [x] Reminders (recordatorios + próximos)
-- [x] Comments (comentarios por sección de nota)
+- [x] Auth (registro + login + JWT + tema de interfaz)
+- [x] Notes (CRUD + espacios + kanban + búsqueda + etiquetas + vínculos + exportar PDF/Markdown + plantillas)
+- [x] Spaces (crear espacio + invitar miembros + roles + notas/kanban por espacio)
+- [x] Reminders (recordatorios + próximos + cron de envío cada minuto)
+- [x] Comments (comentarios por rango de texto: posicion_inicio/fin)
+- [x] Flows (dashboard de flujo al activar colaboración)
+- [x] Widgets (incrustables con posición arrastrable)
+- [x] Drawing (trazos con tableta/ratón)
+- [x] Templates (plantillas del sistema + personalizadas)
 - [x] Speech-to-Text (OpenAI Whisper)
