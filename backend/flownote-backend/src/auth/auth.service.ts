@@ -23,6 +23,8 @@ export class AuthService {
     const hash = await bcrypt.hash(dto.contrasena, 10);
     const usuario = await this.userModel.create({
       nombre: dto.nombre,
+      apellido: dto.apellido,
+      username: dto.username,
       email: dto.email,
       contrasena_hash: hash,
     });

@@ -4,6 +4,12 @@ export class RegisterDto {
   @IsString()
   nombre: string;
 
+  @IsString()
+  apellido: string;
+
+  @IsString()
+  username: string;
+
   @IsEmail()
   email: string;
 

@@ -63,10 +63,9 @@ export class RemindersService {
       throw new ForbiddenException('No puedes modificar este recordatorio');
     }
 
-    const actualizado: any = { ...dto };
-    if (dto.fecha_hora) actualizado.fecha_hora = new Date(dto.fecha_hora);
-
-    return this.reminderModel.findByIdAndUpdate(id, actualizado, { new: true });
+    const updated = await this.reminderModel.findByIdAndUpdate(id, dto, { new: true });
+if (!updated) throw new NotFoundException('Recordatorio no encontrado');
+return updated;
   }
 
   // Eliminar recordatorio
@@ -81,10 +80,11 @@ export class RemindersService {
     return { mensaje: 'Recordatorio eliminado correctamente' };
   }
 
-  // Marcar como enviado (para uso interno o futuro sistema de notificaciones)
-  async marcarEnviado(id: string): Promise<ReminderDocument> {
-    return this.reminderModel.findByIdAndUpdate(
+ async marcarEnviado(id: string): Promise<ReminderDocument> {
+    const reminder = await this.reminderModel.findByIdAndUpdate(
       id, { enviado: true }, { new: true },
     );
+    if (!reminder) throw new Error(`Reminder ${id} not found`);
+    return reminder;
   }
 }

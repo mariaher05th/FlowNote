@@ -87,11 +87,11 @@ export class NotesService {
     }
 
     const actualizada = await this.noteModel.findByIdAndUpdate(id, payload, { new: true });
-
-    if (dto.es_colaborativa && !actualizada.dashboard_id) {
-      return this.convertirAColaborativa(actualizada);
-    }
-    return actualizada;
+if (!actualizada) throw new NotFoundException('Nota no encontrada');
+if (dto.es_colaborativa && !actualizada.dashboard_id) {
+  return this.convertirAColaborativa(actualizada);
+}
+return actualizada;
   }
 
   async eliminar(id: string, userId: string): Promise<{ mensaje: string }> {

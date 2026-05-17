@@ -1,6 +1,8 @@
 # compiled output
 /dist
 /node_modules
+flownote-backend/node_modules
+flownote-backend/dist
 /build
 /generated
 

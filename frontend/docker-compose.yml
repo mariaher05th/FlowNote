@@ -1,19 +1,16 @@
 services:
   db:
     container_name: flownote_db
-    image: postgres:15
+    image: mongo:7
     restart: unless-stopped
     environment:
-      POSTGRES_DB: flownote
-      POSTGRES_USER: flow_user
-      POSTGRES_PASSWORD: Pass1234
-      POSTGRES_HOST: localhost
+      MONGO_INITDB_DATABASE: flownote
     volumes:
-      - db_data:/var/lib/postgresql/data
+      - db_data:/data/db
     ports:
-      - "5432:5432"
+      - "27017:27017"
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "flow_user", "-d", "flownote"]
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,24 +18,27 @@ services:
   backend:
     container_name: flownote_backend
     build:
-      context: ./backend/
+      context: ./flownote-backend/
       dockerfile: Dockerfile
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://flownote_db:27017/flownote
+      PORT: 3000
     ports:
       - "3000:3000"
 
-  frontend:
+ frontend:
     container_name: flownote_frontend
     build:
       context: ./frontend/
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: http://flownote_backend:3000/api
     depends_on:
-      db:
-        condition: service_healthy
+      - backend
     ports:
       - "5173:5173"
-
 volumes:
   db_data:

@@ -8,6 +8,12 @@ export class User {
   @Prop({ required: true, trim: true })
   nombre: string;
 
+  @Prop({ default: '', trim: true })
+  apellido: string;
+
+  @Prop({ default: '', trim: true, unique: true, sparse: true })
+  username: string;
+
   @Prop({ required: true, unique: true, lowercase: true, trim: true })
   email: string;
 

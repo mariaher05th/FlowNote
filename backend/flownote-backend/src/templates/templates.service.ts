@@ -71,19 +71,16 @@ export class TemplatesService implements OnModuleInit {
     });
   }
 
-  async actualizar(
-    id: string, dto: UpdateTemplateDto, userId: string,
-  ): Promise<TemplateDocument> {
-    const plantilla = await this.templateModel.findById(id);
-    if (!plantilla) throw new NotFoundException('Plantilla no encontrada');
-    if (plantilla.es_sistema) {
-      throw new ForbiddenException('No se pueden editar plantillas del sistema');
-    }
-    if (plantilla.autor_id?.toString() !== userId) {
-      throw new ForbiddenException('No puedes editar esta plantilla');
-    }
-    return this.templateModel.findByIdAndUpdate(id, dto, { new: true });
+async actualizar(id: string, dto: any, userId: string): Promise<TemplateDocument> {
+  const plantilla = await this.templateModel.findById(id);
+  if (!plantilla) throw new NotFoundException('Plantilla no encontrada');
+  if (plantilla.autor_id?.toString() !== userId) {
+    throw new ForbiddenException('No puedes editar esta plantilla');
   }
+  const updated = await this.templateModel.findByIdAndUpdate(id, dto, { new: true });
+  if (!updated) throw new NotFoundException('Plantilla no encontrada');
+  return updated;
+}
 
   async eliminar(id: string, userId: string): Promise<{ mensaje: string }> {
     const plantilla = await this.templateModel.findById(id);
