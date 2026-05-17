@@ -1,19 +1,42 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { AuthPage } from './components/AuthPage';
+import { ThemeProvider } from './components/context/ThemeContext';
 
-interface AppProps {
-  page: string;
-}
-
-export default function App({ page }: AppProps) {
-  if (page === 'login' || page === 'register') {
-    return <AuthPage initialView={page as 'login' | 'register'} />;
-  }
+export default function App() {
+  const [screen, setScreen] = useState(() => {
+    const token = localStorage.getItem('token');
+    return token ? 'dashboard' : 'login';
+  });
 
   return (
-    <div style={{ backgroundColor: '#F6F4FB', minHeight: '100vh', color: '#2F2840' }}>
-      <Dashboard initialPage={page} />
-    </div>
+    <ThemeProvider>
+      <div style={{
+        backgroundColor: 'var(--app-bg)',
+        minHeight: '100vh',
+        color: 'var(--app-fg)',
+        transition: 'background-color 0.25s, color 0.25s'
+      }}>
+        {screen === 'login' && (
+          <AuthPage
+            initialView="login"
+            onSuccess={() => setScreen('dashboard')}
+            goToRegister={() => setScreen('register')}
+          />
+        )}
+
+        {screen === 'register' && (
+          <AuthPage
+            initialView="register"
+            onSuccess={() => setScreen('dashboard')}
+            goToLogin={() => setScreen('login')}
+          />
+        )}
+
+        {screen === 'dashboard' && (
+          <Dashboard onLogout={() => setScreen('login')} />
+        )}
+      </div>
+    </ThemeProvider>
   );
 }
