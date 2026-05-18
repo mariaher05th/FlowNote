@@ -15,6 +15,13 @@ interface CanvasItem {
   color: string; // nota: el color de los sticky notes se mantiene fijo (son "papel")
 }
 
+interface Stroke {
+  color: string;
+  size: number;
+  eraser: boolean;
+  points: { x: number; y: number }[];
+}
+
 // Colores fijos de sticky notes — intencionalmente no temáticos (son papel físico)
 const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 
@@ -22,8 +29,11 @@ const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?: () => void }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const saveTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLoaded     = useRef(false);
+  const saveTimer       = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLoaded        = useRef(false);
+  const itemsRef        = useRef<CanvasItem[]>([]);
+  const strokesRef      = useRef<Stroke[]>([]);
+  const currentStroke   = useRef<Stroke | null>(null);
   const [noteTitle,  setNoteTitle]  = useState('');
   const [guardando,  setGuardando]  = useState(false);
   const [guardado,   setGuardado]   = useState(false);
@@ -38,44 +48,97 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     startItem: CanvasItem;
   } | null>(null);
   const [drawing,    setDrawing]    = useState(false);
+  const [canvasVer,  setCanvasVer]  = useState(0); // incrementa al terminar cada trazo
   const [penColor,   setPenColor]   = useState('#8070C8');
   const [penSize,    setPenSize]    = useState(3);
   const [editingId,  setEditingId]  = useState<string | null>(null);
   const [editText,   setEditText]   = useState('');
 
-  // Cargar nota del backend
+  // Reproduce los trazos en el canvas
+  const replayStrokes = (strokes: Stroke[]) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    strokes.forEach(s => {
+      if (s.points.length < 2) return;
+      ctx.beginPath();
+      if (s.eraser) {
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'rgba(0,0,0,1)';
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = s.color;
+      }
+      ctx.lineWidth = s.size;
+      ctx.moveTo(s.points[0].x, s.points[0].y);
+      s.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.stroke();
+    });
+    ctx.globalCompositeOperation = 'source-over';
+  };
+
+  // Serializa items + trazos como JSON puro — sin imágenes
+  const buildContenido = (currentItems: CanvasItem[]) =>
+    JSON.stringify({ items: currentItems, strokes: strokesRef.current });
+
+  // Cargar nota del backend — síncrono, sin race conditions
   useEffect(() => {
     isLoaded.current = false;
+    strokesRef.current = [];
     setItems([]);
     setNoteTitle('');
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     if (!noteId) return;
     api.get(`/notes/${noteId}`).then(res => {
       setNoteTitle(res.data.titulo || '');
       try {
         const data = JSON.parse(res.data.contenido || '{}');
         setItems(Array.isArray(data?.items) ? data.items : []);
+        if (Array.isArray(data?.strokes) && data.strokes.length > 0) {
+          strokesRef.current = data.strokes;
+          replayStrokes(data.strokes);
+        }
       } catch {
         setItems([]);
       }
-      isLoaded.current = true;
+      isLoaded.current = true; // siempre síncrono ahora
     }).catch(() => { setItems([]); isLoaded.current = true; });
   }, [noteId]);
 
-  // Guardar cambios con debounce
+  // Mantener ref sincronizado con items para guardar en cleanup
+  useEffect(() => { itemsRef.current = items; }, [items]);
+
+  // Guardar cuando cambian items O el canvas (canvasVer)
   useEffect(() => {
     if (!noteId || !isLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      api.put(`/notes/${noteId}`, { contenido: JSON.stringify({ items }) });
-    }, 1200);
-  }, [items, noteId]);
+      api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+    }, 500);
+  }, [items, noteId, canvasVer]);
+
+  // Guardar inmediatamente al desmontar
+  useEffect(() => {
+    return () => {
+      if (noteId && isLoaded.current) {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+      }
+    };
+  }, [noteId]);
 
   const guardarAhora = async () => {
-    if (!noteId) return;
+    if (!noteId) { alert('noteId es null'); return; }
     if (saveTimer.current) clearTimeout(saveTimer.current);
+    const canvas = canvasRef.current;
     setGuardando(true);
     try {
-      await api.put(`/notes/${noteId}`, { contenido: JSON.stringify({ items }) });
+      await api.put(`/notes/${noteId}`, { contenido: buildContenido(items) });
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
     } finally {
@@ -88,9 +151,15 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.lineCap = 'round';
+    ctx.lineCap  = 'round';
     ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = 'source-over';
   }, []);
+
+  const getCanvasPos = (e: React.MouseEvent, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
 
   const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (tool !== 'pen' && tool !== 'eraser') return;
@@ -98,29 +167,39 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
+    const { x, y } = getCanvasPos(e, canvas);
+    const isEraser = tool === 'eraser';
+    currentStroke.current = { color: penColor, size: isEraser ? 24 : penSize, eraser: isEraser, points: [{ x, y }] };
     ctx.beginPath();
-    ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
-    // El eraser usa el fondo del tablero — leemos la variable CSS en runtime
-    const eraserColor = getComputedStyle(document.documentElement)
-      .getPropertyValue('--whiteboard-bg').trim() || '#F6F4FB';
-    ctx.strokeStyle = tool === 'eraser' ? eraserColor : penColor;
-    ctx.lineWidth   = tool === 'eraser' ? 24 : penSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (isEraser) { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
+    else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = penColor; }
+    ctx.lineWidth = isEraser ? 24 : penSize;
+    ctx.moveTo(x, y);
     setDrawing(true);
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!drawing) return;
+    if (!drawing || !currentStroke.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    const rect = canvas.getBoundingClientRect();
-    ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+    const { x, y } = getCanvasPos(e, canvas);
+    currentStroke.current.points.push({ x, y });
+    ctx.lineTo(x, y);
     ctx.stroke();
   };
 
-  const stopDraw = () => setDrawing(false);
+  const stopDraw = () => {
+    if (drawing && currentStroke.current && currentStroke.current.points.length > 1) {
+      strokesRef.current = [...strokesRef.current, currentStroke.current];
+      currentStroke.current = null;
+      setCanvasVer(v => v + 1); // dispara el save
+    }
+    setDrawing(false);
+  };
 
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (tool === 'pen' || tool === 'eraser') return;
@@ -247,13 +326,21 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       }}>
         {/* Botón salir */}
         {onBack && (
-          <button onClick={onBack} style={{
-            display: 'flex', alignItems: 'center', gap: '6px',
-            padding: '6px 12px', borderRadius: '10px', border: 'none',
-            backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)',
-            fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit',
-            marginRight: '4px',
-          }}>
+          <button
+            onClick={async () => {
+              if (noteId && isLoaded.current) {
+                if (saveTimer.current) clearTimeout(saveTimer.current);
+                await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+              }
+              onBack();
+            }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '6px',
+              padding: '6px 12px', borderRadius: '10px', border: 'none',
+              backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)',
+              fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit',
+              marginRight: '4px',
+            }}>
             ← Mis Notas
           </button>
         )}

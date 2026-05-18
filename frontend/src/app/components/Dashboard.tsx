@@ -35,12 +35,18 @@ const titleForTipo: Record<string, string> = {
 // ── Empty state reutilizable ──
 function EmptyState({ icon, texto }: { icon: string; texto: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem 0', gap: '0.5rem' }}>
-      <span style={{ fontSize: '1.75rem' }}>{icon}</span>
-      <p style={{ margin: 0, fontSize: '0.825rem', color: 'var(--muted-fg)', textAlign: 'center', fontWeight: 300 }}>{texto}</p>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 0', gap: '0.75rem' }}>
+      <span style={{ fontSize: '2rem', opacity: 0.5 }}>{icon}</span>
+      <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--muted-fg)', textAlign: 'center', fontWeight: 300, lineHeight: 1.5 }}>{texto}</p>
     </div>
   );
 }
+
+const estadoColor: Record<string, { bg: string; fg: string; dot: string }> = {
+  pendiente:   { bg: '#FEF3C7', fg: '#92400E', dot: '#F59E0B' },
+  en_progreso: { bg: '#EDE9FE', fg: '#5B21B6', dot: '#8070C8' },
+  completado:  { bg: '#D1FAE5', fg: '#065F46', dot: '#34D399' },
+};
 
 // ── Widget: Pendientes ──
 function PendientesWidget() {
@@ -53,34 +59,59 @@ function PendientesWidget() {
       .finally(() => setLoading(false));
   }, []);
   if (loading) return <EmptyState icon="⏳" texto="Cargando..." />;
-  if (!notes.length) return <EmptyState icon="📋" texto="Aún no tienes notas pendientes." />;
+  if (!notes.length) return <EmptyState icon="📋" texto="Aún no tienes notas pendientes" />;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      {notes.map(n => (
-        <div key={n._id} style={{
-          backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)',
-          borderRadius: '10px', padding: '7px 10px',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        }}>
-          <span style={{ fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.titulo}</span>
-          {n.estado && (
-            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', marginLeft: '8px', backgroundColor: 'var(--status-pending-bg)', color: 'var(--status-pending-fg)' }}>
-              {n.estado}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+      {notes.map(n => {
+        const c = estadoColor[n.estado] || estadoColor.pendiente;
+        return (
+          <div key={n._id} style={{
+            display: 'flex', alignItems: 'center', gap: '10px',
+            padding: '8px 10px', borderRadius: '10px',
+            backgroundColor: 'var(--app-bg)',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--app-bg)'}
+          >
+            <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: c.dot, flexShrink: 0 }} />
+            <span style={{ fontSize: '0.85rem', color: 'var(--dim-fg)', fontWeight: 300, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {n.titulo}
             </span>
-          )}
-        </div>
-      ))}
+            <span style={{ fontSize: '0.68rem', padding: '2px 7px', borderRadius: '20px', backgroundColor: c.bg, color: c.fg, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {n.estado === 'en_progreso' ? 'En progreso' : n.estado === 'completado' ? 'Listo' : 'Pendiente'}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 // ── Widget: Acceso a nota ──
-function NotaWidget({ config }: { config: Record<string, any> }) {
+function NotaWidget({ config, onNavigate }: { config: Record<string, any>; onNavigate: (noteId: string) => void }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      <div style={{ fontSize: '0.95rem', color: 'var(--card-title)', fontWeight: 400 }}>{config.nota_titulo || 'Sin título'}</div>
-      <div style={{ fontSize: '0.8rem', color: 'var(--muted-fg)' }}>Acceso directo a la nota</div>
-      <div style={{ fontSize: '1.5rem', textAlign: 'center', padding: '0.5rem 0' }}>🔗</div>
+    <div
+      onClick={() => config.nota_id && onNavigate(config.nota_id)}
+      style={{
+        borderRadius: '14px', overflow: 'hidden', cursor: 'pointer',
+        background: 'linear-gradient(135deg, #E8E0F8 0%, #F0D8EC 100%)',
+        padding: '1.25rem', display: 'flex', flexDirection: 'column',
+        gap: '0.75rem', transition: 'opacity 0.2s',
+        minHeight: '100px',
+      }}
+      onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+      onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+    >
+      <div style={{ fontSize: '1.5rem' }}>📄</div>
+      <div>
+        <p style={{ margin: 0, fontSize: '0.95rem', fontWeight: 500, color: '#2F2840', lineHeight: 1.3 }}>
+          {config.nota_titulo || 'Sin título'}
+        </p>
+        <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: '#8070C8', fontWeight: 300 }}>
+          Abrir nota →
+        </p>
+      </div>
     </div>
   );
 }
@@ -109,12 +140,13 @@ function NotaRapidaWidget({ widget, onSave }: { widget: DashboardWidget; onSave:
       ref={taRef}
       value={text}
       onChange={e => handleChange(e.target.value)}
-      placeholder="Escribe algo rápido aquí..."
+      placeholder="Escribe algo aquí..."
       style={{
-        width: '100%', minHeight: '60px', border: 'none',
+        width: '100%', minHeight: '80px', border: 'none',
         backgroundColor: 'transparent', resize: 'none', overflow: 'hidden',
         fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300,
-        outline: 'none', fontFamily: 'inherit', lineHeight: 1.6, boxSizing: 'border-box',
+        outline: 'none', fontFamily: 'inherit', lineHeight: 1.7,
+        boxSizing: 'border-box',
       }}
     />
   );
@@ -131,15 +163,25 @@ function RecordatoriosWidget() {
       .finally(() => setLoading(false));
   }, []);
   if (loading) return <EmptyState icon="⏳" texto="Cargando..." />;
-  if (!items.length) return <EmptyState icon="🔔" texto="Aún no tienes recordatorios pendientes." />;
+  if (!items.length) return <EmptyState icon="🔔" texto="Sin recordatorios pendientes" />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {items.map(r => (
-        <div key={r._id} style={{ backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)', borderRadius: '10px', padding: '7px 10px' }}>
-          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.titulo}</p>
-          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
-            {new Date(r.fecha).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
-          </p>
+        <div key={r._id} style={{
+          display: 'flex', gap: '10px', alignItems: 'flex-start',
+          padding: '8px 10px', borderRadius: '10px',
+          backgroundColor: 'var(--app-bg)', transition: 'background 0.15s',
+        }}
+        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
+        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--app-bg)'}
+        >
+          <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#EDE9FE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.75rem' }}>🔔</div>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--dim-fg)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.titulo}</p>
+            <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
+              {new Date(r.fecha).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
+            </p>
+          </div>
         </div>
       ))}
     </div>
@@ -148,19 +190,23 @@ function RecordatoriosWidget() {
 
 // ── Widget: Externo ──
 function ExternoWidget({ config }: { config: Record<string, any> }) {
-  if (!config.url) return <p style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Sin URL configurada.</p>;
+  if (!config.url) return <EmptyState icon="🌐" texto="Sin URL configurada" />;
   return (
-    <div style={{ width: '100%', height: '160px', borderRadius: '10px', overflow: 'hidden' }}>
-      <iframe src={config.url} width="100%" height="100%" style={{ border: 0 }} title={config.titulo || 'Widget externo'} loading="lazy" scrolling="no" />
+    <div style={{ width: '100%', height: '100%', minHeight: '140px', borderRadius: '10px', overflow: 'hidden' }}>
+      <iframe src={config.url} width="100%" height="100%" style={{ border: 0, display: 'block' }} title={config.titulo || 'Widget externo'} loading="lazy" scrolling="no" />
     </div>
   );
 }
 
 // ── Renderizador por tipo ──
-function WidgetContentRenderer({ widget, onSave }: { widget: DashboardWidget; onSave: (id: string, config: Record<string, any>) => void }) {
+function WidgetContentRenderer({ widget, onSave, onNavigate }: {
+  widget: DashboardWidget;
+  onSave: (id: string, config: Record<string, any>) => void;
+  onNavigate: (noteId: string) => void;
+}) {
   switch (widget.tipo) {
     case 'pendientes':    return <PendientesWidget />;
-    case 'nota':          return <NotaWidget config={widget.config} />;
+    case 'nota':          return <NotaWidget config={widget.config} onNavigate={onNavigate} />;
     case 'nota_rapida':   return <NotaRapidaWidget widget={widget} onSave={onSave} />;
     case 'recordatorios': return <RecordatoriosWidget />;
     case 'externo':       return <ExternoWidget config={widget.config} />;
@@ -169,12 +215,13 @@ function WidgetContentRenderer({ widget, onSave }: { widget: DashboardWidget; on
 }
 
 // ── Widget arrastrable ──
-function DraggableWidget({ widget, index, moveWidget, removeWidget, onSave }: {
+function DraggableWidget({ widget, index, moveWidget, removeWidget, onSave, onNavigate }: {
   widget: DashboardWidget;
   index: number;
   moveWidget: (from: number, to: number) => void;
   removeWidget: (index: number) => void;
   onSave: (id: string, config: Record<string, any>) => void;
+  onNavigate: (noteId: string) => void;
 }) {
   const [minH, setMinH] = useState<number>((widget.config?._height as number) || 0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -245,7 +292,7 @@ function DraggableWidget({ widget, index, moveWidget, removeWidget, onSave }: {
         >✕</button>
       </div>
 
-      <WidgetContentRenderer widget={widget} onSave={onSave} />
+      <WidgetContentRenderer widget={widget} onSave={onSave} onNavigate={onNavigate} />
 
       {/* Handle de resize estilo Xtiles — esquina inferior derecha */}
       <div
@@ -265,13 +312,14 @@ function DraggableWidget({ widget, index, moveWidget, removeWidget, onSave }: {
 }
 
 // ── Home content ──
-function HomeContent({ widgets, moveWidget, removeWidget, onAddClick, nombre, onSave, loading }: {
+function HomeContent({ widgets, moveWidget, removeWidget, onAddClick, nombre, onSave, onNavigate, loading }: {
   widgets: DashboardWidget[];
   moveWidget: (from: number, to: number) => void;
   removeWidget: (index: number) => void;
   onAddClick: () => void;
   nombre: string;
   onSave: (id: string, config: Record<string, any>) => void;
+  onNavigate: (noteId: string) => void;
   loading: boolean;
 }) {
   return (
@@ -289,7 +337,7 @@ function HomeContent({ widgets, moveWidget, removeWidget, onAddClick, nombre, on
           <p style={{ color: 'var(--muted-fg)' }}>Cargando widgets...</p>
         ) : (
           widgets.map((widget, index) => (
-            <DraggableWidget key={widget._id} widget={widget} index={index} moveWidget={moveWidget} removeWidget={removeWidget} onSave={onSave} />
+            <DraggableWidget key={widget._id} widget={widget} index={index} moveWidget={moveWidget} removeWidget={removeWidget} onSave={onSave} onNavigate={onNavigate} />
           ))
         )}
         <button onClick={onAddClick} style={{ minHeight: '180px', backgroundColor: 'var(--card-bg)', border: '2px dashed var(--card-border)', borderRadius: '16px', cursor: 'pointer', color: 'var(--primary)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'all 0.15s ease' }}>
@@ -411,7 +459,7 @@ export function Dashboard() {
   };
 
   const pages: Record<string, React.ReactNode> = {
-    inicio: <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={openModal} nombre={nombre} onSave={saveWidgetConfig} loading={loadingWidgets} />,
+    inicio: <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={openModal} nombre={nombre} onSave={saveWidgetConfig} onNavigate={goToBoard} loading={loadingWidgets} />,
     notas:         <MyNotes goToBoard={goToBoard} />,
     workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
     equipo:        <Team />,

@@ -68,7 +68,7 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
-    const dto = { email: 'ana@test.com', contrasena: 'password123' };
+    const dto = { username: 'ana_test', contrasena: 'password123' };
 
     it('inicia sesión con credenciales válidas', async () => {
       userModel.findOne.mockResolvedValue(usuarioMock);
@@ -77,7 +77,6 @@ describe('AuthService', () => {
       const result = await service.login(dto);
 
       expect(result.token).toBe('jwt-token');
-      expect(result.usuario.email).toBe(dto.email);
     });
 
     it('lanza UnauthorizedException si el usuario no existe', async () => {
