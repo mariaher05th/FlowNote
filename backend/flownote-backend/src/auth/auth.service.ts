@@ -14,11 +14,11 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    // Verificar si el correo ya existe
-    const existe = await this.userModel.findOne({ email: dto.email });
-    if (existe) {
-      throw new ConflictException('El correo ya está registrado');
-    }
+    const existeEmail = await this.userModel.findOne({ email: dto.email });
+    if (existeEmail) throw new ConflictException('El correo ya está registrado');
+
+    const existeUsername = await this.userModel.findOne({ username: dto.username });
+    if (existeUsername) throw new ConflictException('El nombre de usuario ya está en uso');
 
     const hash = await bcrypt.hash(dto.contrasena, 10);
     const usuario = await this.userModel.create({
@@ -38,9 +38,9 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const usuario = await this.userModel.findOne({ email: dto.email });
+    const usuario = await this.userModel.findOne({ username: dto.username });
     if (!usuario) {
-      throw new UnauthorizedException('Credenciales incorrectas');
+      throw new UnauthorizedException('Usuario o contraseña incorrectos');
     }
 
     const valida = await bcrypt.compare(dto.contrasena, usuario.contrasena_hash);
@@ -76,6 +76,8 @@ export class AuthService {
     return {
       id: usuario._id,
       nombre: usuario.nombre,
+      apellido: usuario.apellido,
+      username: usuario.username,
       email: usuario.email,
       tema_interfaz: usuario.tema_interfaz,
     };

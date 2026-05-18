@@ -5,6 +5,9 @@ export type WidgetDocument = Widget & Document;
 
 @Schema({ timestamps: true })
 export class Widget {
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  usuario_id: Types.ObjectId | null;
+
   @Prop({ type: Types.ObjectId, ref: 'Note', default: null })
   nota_id: Types.ObjectId | null;
 

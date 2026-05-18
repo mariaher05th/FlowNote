@@ -1,6 +1,6 @@
 // src/app/components/Dashboard.tsx
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DndProvider, useDrag, useDrop } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { MyNotes } from './MyNotes';
@@ -10,293 +10,289 @@ import { Reminders } from './Reminders';
 import { Whiteboard } from './Whiteboard';
 import { ThemePicker } from './ThemePicker';
 import React from 'react';
-import { Home, StickyNote, Workflow, Bell, ChevronLeft, ChevronRight } from "lucide-react";
+import { Home, StickyNote, Workflow, Bell, ChevronLeft, ChevronRight, LogOut } from "lucide-react";
+import { authService } from '../../services/auth.service';
+import { dashboardWidgetsService, DashboardWidget } from '../../services/dashboard-widgets.service';
+import { notesService, Note } from '../../services/notes.service';
+import { remindersService, Reminder } from '../../services/reminders.service';
 
-// ========================================
-// CONFIGURACIÓN DRAG & DROP
-// ========================================
 const WIDGET_TYPE = 'WIDGET';
 
-// Los border/accent de los widgets usan variables del tema activo
-const initialWidgets = [
-  { id: 'pending',    title: 'Pendientes'    },
-  { id: 'projects',  title: 'Proyectos'     },
-  { id: 'weather',   title: 'Clima'         },
-  { id: 'maps',      title: 'Ubicación'     },
-  { id: 'reminders', title: 'Recordatorios' },
-  { id: 'notes',     title: 'Nota rápida'   },
+// ── Tipos de widget disponibles ──
+const WIDGET_TIPOS = [
+  { tipo: 'pendientes',   label: 'Pendientes',      desc: 'Tus notas pendientes',           icon: '📋' },
+  { tipo: 'nota',         label: 'Acceso a nota',   desc: 'Acceso directo a una de tus notas', icon: '🔗' },
+  { tipo: 'nota_rapida',  label: 'Nota rápida',     desc: 'Escribe lo que quieras',         icon: '✏️' },
+  { tipo: 'recordatorios',label: 'Recordatorios',   desc: 'Tus próximos recordatorios',     icon: '🔔' },
+  { tipo: 'externo',      label: 'Widget externo',  desc: 'Inserta un link externo (Notion, etc.)', icon: '🌐' },
 ];
 
-// availableWidgets igual que initialWidgets (para el modal)
-const availableWidgets = [...initialWidgets];
-
-const pendingTasks = [
-  { id: 1, text: 'Review budget allocations',   status: 'pending'    },
-  { id: 2, text: 'Draft OKRs for Q2',           status: 'inprogress' },
-  { id: 3, text: 'Schedule team meetings',      status: 'pending'    },
-  { id: 4, text: 'Gather stakeholder feedback', status: 'inprogress' },
-  { id: 5, text: 'Update project timeline',     status: 'done'       },
-];
-
-const statusLabel: Record<string, string> = {
-  pending: 'Pendiente', inprogress: 'En progreso', done: 'Completado',
+const titleForTipo: Record<string, string> = {
+  pendientes: 'Pendientes', nota: 'Nota', nota_rapida: 'Nota rápida',
+  recordatorios: 'Recordatorios', externo: 'Widget externo',
 };
 
-// ========================================
-// CONTENIDO DE WIDGETS
-// ========================================
-function WidgetContent({ id }: { id: string }) {
-  if (id === 'pending') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {pendingTasks.map(task => (
-          <div key={task.id} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)',
-            borderRadius: '10px', padding: '7px 10px',
-          }}>
-            <span style={{ fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 300 }}>{task.text}</span>
-            <span style={{
-              fontSize: '0.75rem', fontWeight: 400,
-              backgroundColor: `var(--status-${task.status}-bg)`,
-              color: `var(--status-${task.status}-fg)`,
-              padding: '2px 10px', borderRadius: '20px', whiteSpace: 'nowrap', marginLeft: '8px',
-            }}>
-              {statusLabel[task.status]}
-            </span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (id === 'projects') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {[
-          { name: 'FlowNote App', progress: 65 },
-          { name: 'Marketing Q2', progress: 40 },
-          { name: 'Diseño UI',    progress: 80 },
-        ].map((p, i) => (
-          <div key={p.name}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span style={{ fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 300 }}>{p.name}</span>
-              <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)' }}>{p.progress}%</span>
-            </div>
-            <div style={{ backgroundColor: 'var(--progress-track)', borderRadius: '6px', height: '4px' }}>
-              <div style={{
-                width: `${p.progress}%`,
-                backgroundColor: i === 1 ? 'var(--sidebar-user-role)' : 'var(--primary)',
-                borderRadius: '6px', height: '4px',
-              }} />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (id === 'weather') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', padding: '4px 0' }}>
-        <div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 300, color: 'var(--card-title)', lineHeight: 1 }}>72°</div>
-          <div style={{ fontSize: '0.9rem', fontWeight: 300, color: 'var(--muted-fg)', marginTop: '4px' }}>San Francisco</div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 300, color: 'var(--muted-fg)', marginTop: '6px' }}>Sunny · High 75° · Low 62°</div>
-        </div>
-        <svg width="52" height="52" viewBox="0 0 64 64" fill="none">
-          <circle cx="32" cy="32" r="12" fill="var(--status-pending-bg)" />
-          <line x1="32" y1="8"  x2="32" y2="14" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="32" y1="50" x2="32" y2="56" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="56" y1="32" x2="50" y2="32" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="14" y1="32" x2="8"  y2="32" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="47.5" y1="16.5" x2="43.3" y2="20.7" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="20.7" y1="43.3" x2="16.5" y2="47.5" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="47.5" y1="47.5" x2="43.3" y2="43.3" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-          <line x1="20.7" y1="20.7" x2="16.5" y2="16.5" stroke="var(--status-pending-bg)" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      </div>
-    );
-  }
-
-  if (id === 'maps') {
-    return (
-      <div style={{ width: '100%', height: '160px', borderRadius: '10px', overflow: 'hidden' }}>
-        <iframe
-          src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3151.8354345096513!2d144.9537353159044!3d-37.81627974201477!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x6ad65d4c2b349649%3A0xb6899234e561db11!2sEnvato!5e0!3m2!1sen!2sau!4v1234567890123!5m2!1sen!2sau"
-          width="100%" height="100%" style={{ border: 0 }} loading="lazy" title="Maps"
-        />
-      </div>
-    );
-  }
-
-  if (id === 'reminders') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {[
-          { text: 'Revisar objetivos semanales', time: 'Viernes 5:00 PM' },
-          { text: 'Reunión de equipo',           time: 'Lunes 9:00 AM'   },
-          { text: 'Entregar informe Q2',         time: 'Miércoles 3:00 PM' },
-        ].map((r, i) => (
-          <div key={i} style={{
-            backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)',
-            borderRadius: '10px', padding: '7px 10px',
-          }}>
-            <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 400 }}>{r.text}</p>
-            <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 300 }}>{r.time}</p>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (id === 'notes') {
-    return (
-      <textarea
-        placeholder="Escribe algo rápido aquí..."
-        style={{
-          width: '100%', height: '120px', border: 'none',
-          backgroundColor: 'transparent', resize: 'none',
-          fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300,
-          outline: 'none', fontFamily: 'inherit', lineHeight: 1.6,
-        }}
-      />
-    );
-  }
-
-  return null;
+// ── Empty state reutilizable ──
+function EmptyState({ icon, texto }: { icon: string; texto: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.5rem 0', gap: '0.5rem' }}>
+      <span style={{ fontSize: '1.75rem' }}>{icon}</span>
+      <p style={{ margin: 0, fontSize: '0.825rem', color: 'var(--muted-fg)', textAlign: 'center', fontWeight: 300 }}>{texto}</p>
+    </div>
+  );
 }
 
-// ========================================
-// WIDGET ARRASTRABLE (con botón de quitar — cambio de compañera)
-// ========================================
-function DraggableWidget({ widget, index, moveWidget, removeWidget }: {
-  widget: typeof initialWidgets[0];
+// ── Widget: Pendientes ──
+function PendientesWidget() {
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    notesService.getAll()
+      .then(data => setNotes(data.filter(n => n.estado !== 'completado').slice(0, 6)))
+      .catch(() => setNotes([]))
+      .finally(() => setLoading(false));
+  }, []);
+  if (loading) return <EmptyState icon="⏳" texto="Cargando..." />;
+  if (!notes.length) return <EmptyState icon="📋" texto="Aún no tienes notas pendientes." />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {notes.map(n => (
+        <div key={n._id} style={{
+          backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)',
+          borderRadius: '10px', padding: '7px 10px',
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        }}>
+          <span style={{ fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.titulo}</span>
+          {n.estado && (
+            <span style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', marginLeft: '8px', backgroundColor: 'var(--status-pending-bg)', color: 'var(--status-pending-fg)' }}>
+              {n.estado}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Widget: Acceso a nota ──
+function NotaWidget({ config }: { config: Record<string, any> }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ fontSize: '0.95rem', color: 'var(--card-title)', fontWeight: 400 }}>{config.nota_titulo || 'Sin título'}</div>
+      <div style={{ fontSize: '0.8rem', color: 'var(--muted-fg)' }}>Acceso directo a la nota</div>
+      <div style={{ fontSize: '1.5rem', textAlign: 'center', padding: '0.5rem 0' }}>🔗</div>
+    </div>
+  );
+}
+
+// ── Widget: Nota rápida ──
+function NotaRapidaWidget({ widget, onSave }: { widget: DashboardWidget; onSave: (id: string, config: Record<string, any>) => void }) {
+  const [text, setText] = useState<string>((widget.config?.contenido as string) || '');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (taRef.current) {
+      taRef.current.style.height = 'auto';
+      taRef.current.style.height = taRef.current.scrollHeight + 'px';
+    }
+  }, [text]);
+
+  const handleChange = (val: string) => {
+    setText(val);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => onSave(widget._id, { ...widget.config, contenido: val }), 800);
+  };
+
+  return (
+    <textarea
+      ref={taRef}
+      value={text}
+      onChange={e => handleChange(e.target.value)}
+      placeholder="Escribe algo rápido aquí..."
+      style={{
+        width: '100%', minHeight: '60px', border: 'none',
+        backgroundColor: 'transparent', resize: 'none', overflow: 'hidden',
+        fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300,
+        outline: 'none', fontFamily: 'inherit', lineHeight: 1.6, boxSizing: 'border-box',
+      }}
+    />
+  );
+}
+
+// ── Widget: Recordatorios ──
+function RecordatoriosWidget() {
+  const [items, setItems] = useState<Reminder[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    remindersService.getAll()
+      .then(data => setItems(data.filter(r => !r.completado).slice(0, 4)))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, []);
+  if (loading) return <EmptyState icon="⏳" texto="Cargando..." />;
+  if (!items.length) return <EmptyState icon="🔔" texto="Aún no tienes recordatorios pendientes." />;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+      {items.map(r => (
+        <div key={r._id} style={{ backgroundColor: 'var(--app-bg)', border: '0.5px solid var(--card-border)', borderRadius: '10px', padding: '7px 10px' }}>
+          <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--dim-fg)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.titulo}</p>
+          <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
+            {new Date(r.fecha).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Widget: Externo ──
+function ExternoWidget({ config }: { config: Record<string, any> }) {
+  if (!config.url) return <p style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>Sin URL configurada.</p>;
+  return (
+    <div style={{ width: '100%', height: '160px', borderRadius: '10px', overflow: 'hidden' }}>
+      <iframe src={config.url} width="100%" height="100%" style={{ border: 0 }} title={config.titulo || 'Widget externo'} loading="lazy" scrolling="no" />
+    </div>
+  );
+}
+
+// ── Renderizador por tipo ──
+function WidgetContentRenderer({ widget, onSave }: { widget: DashboardWidget; onSave: (id: string, config: Record<string, any>) => void }) {
+  switch (widget.tipo) {
+    case 'pendientes':    return <PendientesWidget />;
+    case 'nota':          return <NotaWidget config={widget.config} />;
+    case 'nota_rapida':   return <NotaRapidaWidget widget={widget} onSave={onSave} />;
+    case 'recordatorios': return <RecordatoriosWidget />;
+    case 'externo':       return <ExternoWidget config={widget.config} />;
+    default:              return null;
+  }
+}
+
+// ── Widget arrastrable ──
+function DraggableWidget({ widget, index, moveWidget, removeWidget, onSave }: {
+  widget: DashboardWidget;
   index: number;
   moveWidget: (from: number, to: number) => void;
   removeWidget: (index: number) => void;
+  onSave: (id: string, config: Record<string, any>) => void;
 }) {
+  const [minH, setMinH] = useState<number>((widget.config?._height as number) || 0);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cardRef = useRef<HTMLDivElement>(null);
+
   const [{ isDragging }, drag] = useDrag({
     type: WIDGET_TYPE,
     item: { index },
     collect: monitor => ({ isDragging: monitor.isDragging() }),
   });
-
   const [, drop] = useDrop({
     accept: WIDGET_TYPE,
     hover: (item: { index: number }) => {
-      if (item.index !== index) {
-        moveWidget(item.index, index);
-        item.index = index;
-      }
+      if (item.index !== index) { moveWidget(item.index, index); item.index = index; }
     },
   });
 
+  // Actualiza startResize para leer altura del cardRef
+  const startResizeFinal = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = cardRef.current?.offsetHeight ?? 200;
+    const onMove = (ev: MouseEvent) => {
+      setMinH(Math.max(80, startH + ev.clientY - startY));
+    };
+    const onUp = (ev: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      const finalH = Math.max(80, startH + ev.clientY - startY);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() =>
+        onSave(widget._id, { ...widget.config, _height: finalH }), 400);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
   return (
     <div
-      ref={node => { drag(node); drop(node); }}
+      ref={node => { drop(node); if (node) cardRef.current = node; }}
       style={{
-        backgroundColor: 'var(--card-bg)',
-        border: '0.5px solid var(--card-border)',
-        borderRadius: '16px',
-        padding: '1.25rem',
+        backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--card-border)',
+        borderRadius: '16px', padding: '1.25rem',
         boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
         opacity: isDragging ? 0.4 : 1,
-        cursor: 'grab',
-        transition: 'all 0.15s ease',
+        transition: 'box-shadow 0.15s ease',
+        minHeight: minH > 0 ? `${minH}px` : undefined,
+        position: 'relative',
       }}
       onMouseEnter={e => e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,0,0,0.09)'}
       onMouseLeave={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.04)'}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+      {/* Solo el header arrastra el widget */}
+      <div ref={drag as any} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', cursor: 'grab' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
           <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 400, color: 'var(--card-title)' }}>
-            {widget.title}
+            {widget.tipo === 'nota' ? (widget.config?.nota_titulo as string || 'Nota') : titleForTipo[widget.tipo]}
           </h3>
           <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: 'var(--primary)' }} />
         </div>
-        {/* Botón quitar widget — cambio de compañera */}
         <button
           onClick={() => removeWidget(index)}
-          style={{
-            border: 'none', background: 'transparent', cursor: 'pointer',
-            color: 'var(--muted-fg)', fontSize: '1rem',
-            width: '24px', height: '24px', borderRadius: '50%',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: '0.15s',
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.backgroundColor = 'var(--highlight-bg)';
-            e.currentTarget.style.color = 'var(--primary)';
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = 'var(--muted-fg)';
-          }}
-        >
-          ✕
-        </button>
+          style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: 'var(--muted-fg)', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.15s' }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'; e.currentTarget.style.color = 'var(--primary)'; }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--muted-fg)'; }}
+        >✕</button>
       </div>
-      <WidgetContent id={widget.id} />
+
+      <WidgetContentRenderer widget={widget} onSave={onSave} />
+
+      {/* Handle de resize estilo Xtiles — esquina inferior derecha */}
+      <div
+        onMouseDown={startResizeFinal}
+        style={{
+          position: 'absolute', bottom: '4px', right: '6px',
+          width: '14px', height: '14px', cursor: 'nwse-resize',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: 'var(--muted-fg)', fontSize: '10px', opacity: 0.4,
+          userSelect: 'none', lineHeight: 1,
+        }}
+        onMouseEnter={e => e.currentTarget.style.opacity = '1'}
+        onMouseLeave={e => e.currentTarget.style.opacity = '0.4'}
+      >⌟</div>
     </div>
   );
 }
 
-// ========================================
-// HOME CONTENT (con botón agregar widget — cambio de compañera)
-// ========================================
-function HomeContent({ widgets, moveWidget, removeWidget, onAddClick }: {
-  widgets: typeof initialWidgets;
+// ── Home content ──
+function HomeContent({ widgets, moveWidget, removeWidget, onAddClick, nombre, onSave, loading }: {
+  widgets: DashboardWidget[];
   moveWidget: (from: number, to: number) => void;
   removeWidget: (index: number) => void;
   onAddClick: () => void;
+  nombre: string;
+  onSave: (id: string, config: Record<string, any>) => void;
+  loading: boolean;
 }) {
   return (
     <>
-      <div style={{
-        width: '100%', height: '200px',
-        background: 'var(--hero-gradient)',
-        display: 'flex', alignItems: 'flex-end', padding: '0 3rem 1.5rem',
-      }}>
-        <div style={{
-          width: '56px', height: '56px', borderRadius: '50%',
-          backgroundColor: 'var(--card-bg)', border: '3px solid var(--app-bg)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '1.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.10)',
-        }}>✨</div>
+      <div style={{ width: '100%', height: '200px', background: 'var(--hero-gradient)', display: 'flex', alignItems: 'flex-end', padding: '0 3rem 1.5rem' }}>
+        <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'var(--card-bg)', border: '3px solid var(--app-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.10)' }}>✨</div>
       </div>
-
       <div style={{ padding: '1.5rem 3rem 0' }}>
         <p style={{ fontSize: '0.9rem', color: 'var(--muted-fg)', fontWeight: 300, margin: '0 0 0.25rem' }}>Bienvenida de vuelta</p>
-        <h1 style={{ fontSize: '2rem', fontWeight: 300, color: 'var(--card-title)', letterSpacing: '-0.02em', margin: '0 0 0.5rem' }}>Bienvenida, María</h1>
-        <p style={{ fontSize: '0.875rem', color: 'var(--muted-fg)', fontWeight: 300, margin: '0 0 2rem' }}>3 tareas pendientes hoy · Arrastra los widgets para organizarlos</p>
+        <h1 style={{ fontSize: '2rem', fontWeight: 300, color: 'var(--card-title)', letterSpacing: '-0.02em', margin: '0 0 0.5rem' }}>Bienvenida, {nombre}</h1>
+        <p style={{ fontSize: '0.875rem', color: 'var(--muted-fg)', fontWeight: 300, margin: '0 0 2rem' }}>Arrastra los widgets para organizarlos</p>
       </div>
-
-      <div style={{ padding: '0 3rem 3rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem' }}>
-        {widgets.map((widget, index) => (
-          <DraggableWidget key={`${widget.id}-${index}`} widget={widget} index={index} moveWidget={moveWidget} removeWidget={removeWidget} />
-        ))}
-
-        {/* Botón agregar widget — cambio de compañera */}
-        <button
-          onClick={onAddClick}
-          style={{
-            minHeight: '180px',
-            backgroundColor: 'var(--card-bg)',
-            border: '2px dashed var(--card-border)',
-            borderRadius: '16px',
-            cursor: 'pointer',
-            color: 'var(--primary)',
-            fontSize: '2rem',
-            fontWeight: 300,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '0.5rem',
-            transition: 'all 0.15s ease',
-          }}
-        >
+      <div style={{ padding: '0 3rem 3rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1.25rem', alignItems: 'start' }}>
+        {loading ? (
+          <p style={{ color: 'var(--muted-fg)' }}>Cargando widgets...</p>
+        ) : (
+          widgets.map((widget, index) => (
+            <DraggableWidget key={widget._id} widget={widget} index={index} moveWidget={moveWidget} removeWidget={removeWidget} onSave={onSave} />
+          ))
+        )}
+        <button onClick={onAddClick} style={{ minHeight: '180px', backgroundColor: 'var(--card-bg)', border: '2px dashed var(--card-border)', borderRadius: '16px', cursor: 'pointer', color: 'var(--primary)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', transition: 'all 0.15s ease' }}>
           <span style={{ fontSize: '2.5rem' }}>+</span>
           <span style={{ fontSize: '0.9rem' }}>Agregar widget</span>
         </button>
@@ -309,14 +305,69 @@ function HomeContent({ widgets, moveWidget, removeWidget, onAddClick }: {
 // DASHBOARD PRINCIPAL
 // ========================================
 export function Dashboard() {
-  const [widgets, setWidgets]               = useState(initialWidgets);
+  const [widgets, setWidgets]               = useState<DashboardWidget[]>([]);
+  const [loadingWidgets, setLoadingWidgets] = useState(true);
   const [activePage, setActivePage]         = useState('inicio');
-  const [sidebarOpen, setSidebarOpen]       = useState(true);   // cambio de compañera
-  const [showWidgetModal, setShowWidgetModal] = useState(false); // cambio de compañera
+  const [sidebarOpen, setSidebarOpen]       = useState(true);
+  const [sidebarWidth, setSidebarWidth]     = useState(220);
+  const [showWidgetModal, setShowWidgetModal] = useState(false);
+  const [modalStep, setModalStep]           = useState<'tipo' | 'nota' | 'externo'>('tipo');
+  const [modalError, setModalError]         = useState('');
+  const [addingWidget, setAddingWidget]     = useState(false);
+  const [userNotes, setUserNotes]           = useState<Note[]>([]);
+  const [externUrl, setExternUrl]           = useState('');
+  const [externTitle, setExternTitle]       = useState('');
 
-  const addWidget = (widget: typeof initialWidgets[0]) => {
-    setWidgets([...widgets, widget]);
-    setShowWidgetModal(false);
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const nombre = user.nombre || '';
+  const apellido = user.apellido || '';
+  const iniciales = `${nombre.charAt(0)}${apellido.charAt(0)}`.toUpperCase() || '?';
+  const nombreCompleto = apellido ? `${nombre} ${apellido}` : nombre;
+
+  useEffect(() => {
+    dashboardWidgetsService.getAll()
+      .then(data => setWidgets(data))
+      .catch(() => setWidgets([]))
+      .finally(() => setLoadingWidgets(false));
+  }, []);
+
+  const openModal = () => {
+    setModalStep('tipo');
+    setModalError('');
+    setExternUrl('');
+    setExternTitle('');
+    setShowWidgetModal(true);
+  };
+
+  const addWidget = async (tipo: string, config: Record<string, any> = {}) => {
+    setAddingWidget(true);
+    setModalError('');
+    try {
+      const w = await dashboardWidgetsService.create(tipo, config);
+      setWidgets(prev => [...prev, w]);
+      setShowWidgetModal(false);
+    } catch {
+      setModalError('No se pudo crear el widget. Reconstruye el backend: docker compose build backend');
+    } finally {
+      setAddingWidget(false);
+    }
+  };
+
+  const handleTipoSelect = async (tipo: string) => {
+    setModalError('');
+    try {
+      if (tipo === 'nota') {
+        const notes = await notesService.getAll();
+        setUserNotes(notes);
+        setModalStep('nota');
+      } else if (tipo === 'externo') {
+        setModalStep('externo');
+      } else {
+        await addWidget(tipo);
+      }
+    } catch {
+      setModalError('Ocurrió un error. Intenta de nuevo.');
+    }
   };
 
   const moveWidget = (from: number, to: number) => {
@@ -326,12 +377,35 @@ export function Dashboard() {
     setWidgets(updated);
   };
 
-  const removeWidget = (index: number) => {
-    setWidgets(widgets.filter((_, i) => i !== index));
+  const removeWidget = async (index: number) => {
+    const w = widgets[index];
+    await dashboardWidgetsService.delete(w._id);
+    setWidgets(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const saveWidgetConfig = async (id: string, config: Record<string, any>) => {
+    await dashboardWidgetsService.updateConfig(id, config);
+    setWidgets(prev => prev.map(w => w._id === id ? { ...w, config } : w));
+  };
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.min(400, Math.max(160, startW + ev.clientX - startX));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
   };
 
   const pages: Record<string, React.ReactNode> = {
-    inicio:        <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={() => setShowWidgetModal(true)} />,
+    inicio: <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={openModal} nombre={nombre} onSave={saveWidgetConfig} loading={loadingWidgets} />,
     notas:         <MyNotes goToBoard={() => setActivePage('tablero')} />,
     workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
     equipo:        <Team />,
@@ -339,10 +413,6 @@ export function Dashboard() {
     tablero:       <Whiteboard />,
   };
 
-  const pageTitle: Record<string, string> = {
-    inicio: 'Dashboard', notas: 'Mis Notas', workflows: 'Workflows',
-    equipo: 'Equipo', recordatorios: 'Recordatorios', tablero: 'Tablero',
-  };
 
   const navItems = [
     { label: 'Inicio',        key: 'inicio',        icon: Home      },
@@ -355,14 +425,13 @@ export function Dashboard() {
     <DndProvider backend={HTML5Backend}>
       <div style={{ display: 'flex', minHeight: '100vh' }}>
 
-        {/* ── SIDEBAR (colapsable — cambio de compañera) ── */}
+        {/* ── SIDEBAR ── */}
         <aside style={{
-          width: sidebarOpen ? '220px' : '76px',
+          width: sidebarOpen ? `${sidebarWidth}px` : '76px',
           backgroundColor: 'var(--sidebar-bg)',
-          borderRight: '0.5px solid var(--sidebar-border)',
           display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
           height: '100vh', position: 'sticky', top: 0, flexShrink: 0,
-          overflow: 'hidden', transition: 'width 0.3s ease',
+          overflow: 'hidden', transition: sidebarOpen ? 'none' : 'width 0.3s ease',
         }}>
           <div style={{
             padding: sidebarOpen ? '2.5rem 1.5rem' : '2.5rem 0.75rem',
@@ -452,40 +521,46 @@ export function Dashboard() {
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: '0.8125rem', fontWeight: 400, color: 'var(--sidebar-avatar-fg)', flexShrink: 0,
                 }}
-              >MJ</div>
+              >{iniciales}</div>
               {sidebarOpen && (
-                <div>
-                  <div style={{ fontSize: '0.9375rem', fontWeight: 400, color: 'var(--card-title)' }}>Maria José</div>
-                  <div style={{ fontSize: '0.8125rem', fontWeight: 300, color: 'var(--sidebar-user-role)' }}>Admin</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '0.9375rem', fontWeight: 400, color: 'var(--card-title)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nombreCompleto}</div>
+                  <div style={{ fontSize: '0.8125rem', fontWeight: 300, color: 'var(--card-title)' }}>@{user.username || nombre.toLowerCase()}</div>
                 </div>
               )}
+              <button
+                onClick={() => authService.logout()}
+                title="Cerrar sesión"
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: '#B0A0C0', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', padding: '6px', borderRadius: '8px',
+                  flexShrink: 0, transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#F0EBF8'; e.currentTarget.style.color = '#8070C8'; }}
+                onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#B0A0C0'; }}
+              >
+                <LogOut size={17} strokeWidth={1.8} />
+              </button>
             </div>
           </div>
         </aside>
 
+        {/* Handle de arrastre entre sidebar y main */}
+        {sidebarOpen && (
+          <div
+            onMouseDown={startResize}
+            style={{
+              width: '5px', cursor: 'col-resize', flexShrink: 0,
+              backgroundColor: 'transparent', transition: 'background-color 0.15s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--sidebar-border)'}
+            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+          />
+        )}
+
         {/* ── MAIN ── */}
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--app-bg)' }}>
-          {/* Header */}
-          <div style={{
-            padding: '1rem 2rem', borderBottom: '1px solid var(--header-border)',
-            backgroundColor: 'var(--header-bg)',
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          }}>
-            <span style={{ fontSize: '1rem', color: 'var(--header-fg)', fontWeight: 400 }}>
-              {pageTitle[activePage]}
-            </span>
-            <input
-              placeholder="Buscar notas..."
-              style={{
-                padding: '0.4rem 1rem', borderRadius: '20px',
-                border: '1px solid var(--input-border)',
-                backgroundColor: 'var(--input-bg)',
-                color: 'var(--app-fg)',
-                fontSize: '0.8rem', outline: 'none',
-              }}
-            />
-          </div>
-
           <div style={{ flex: 1, overflow: 'auto' }}>
             {pages[activePage]}
           </div>
@@ -495,54 +570,60 @@ export function Dashboard() {
 
       {/* Modal agregar widget (cambio de compañera) */}
       {showWidgetModal && (
-        <div style={{
-          position: 'fixed', inset: 0,
-          backgroundColor: 'rgba(0,0,0,0.30)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
-        }}>
-          <div style={{
-            backgroundColor: 'var(--card-bg)', borderRadius: '18px',
-            padding: '2rem', width: '420px',
-            boxShadow: '0 12px 40px rgba(0,0,0,0.15)',
-          }}>
-            <h2 style={{ margin: '0 0 0.5rem', fontSize: '1.4rem', fontWeight: 300, color: 'var(--card-title)' }}>
-              Agregar widget
-            </h2>
-            <p style={{ margin: '0 0 1.5rem', fontSize: '0.875rem', color: 'var(--muted-fg)' }}>
-              Selecciona el tipo de widget que quieres agregar al inicio.
-            </p>
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.30)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: 'var(--card-bg)', borderRadius: '18px', padding: '2rem', width: '440px', boxShadow: '0 12px 40px rgba(0,0,0,0.15)' }}>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              {availableWidgets.map(widget => (
-                <button
-                  key={widget.id}
-                  onClick={() => addWidget(widget)}
-                  style={{
-                    padding: '1rem', borderRadius: '14px',
-                    border: '1px solid var(--card-border)',
-                    backgroundColor: 'var(--app-bg)',
-                    cursor: 'pointer', textAlign: 'left',
-                  }}
-                >
-                  <div style={{
-                    width: '10px', height: '10px', borderRadius: '50%',
-                    backgroundColor: 'var(--primary)', marginBottom: '0.75rem',
-                  }} />
-                  <span style={{ fontSize: '0.9rem', color: 'var(--card-title)', fontWeight: 400 }}>
-                    {widget.title}
-                  </span>
-                </button>
-              ))}
-            </div>
+            {modalError && (
+              <div style={{ backgroundColor: '#FEE8EC', border: '0.5px solid #F0C0CC', borderRadius: '10px', padding: '0.65rem 1rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#C04060' }}>
+                {modalError}
+              </div>
+            )}
 
-            <button
-              onClick={() => setShowWidgetModal(false)}
-              style={{
-                marginTop: '1.5rem', width: '100%', padding: '0.7rem',
-                borderRadius: '20px', border: '1px solid var(--card-border)',
-                backgroundColor: 'transparent', color: 'var(--subtle-fg)', cursor: 'pointer',
-              }}
-            >
+            {/* Paso 1: elegir tipo */}
+            {modalStep === 'tipo' && (<>
+              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.3rem', fontWeight: 300, color: 'var(--card-title)' }}>Agregar widget</h2>
+              <p style={{ margin: '0 0 1.5rem', fontSize: '0.85rem', color: 'var(--muted-fg)' }}>¿Qué tipo de widget quieres agregar?</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                {WIDGET_TIPOS.map(t => (
+                  <button key={t.tipo} onClick={() => handleTipoSelect(t.tipo)} disabled={addingWidget} style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.85rem 1rem', borderRadius: '12px', border: '0.5px solid var(--card-border)', backgroundColor: 'var(--app-bg)', cursor: addingWidget ? 'wait' : 'pointer', textAlign: 'left', opacity: addingWidget ? 0.6 : 1 }}>
+                    <span style={{ fontSize: '1.4rem' }}>{t.icon}</span>
+                    <div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 400, color: 'var(--card-title)' }}>{t.label}</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--muted-fg)' }}>{t.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>)}
+
+            {/* Paso 2a: elegir nota */}
+            {modalStep === 'nota' && (<>
+              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.3rem', fontWeight: 300, color: 'var(--card-title)' }}>Elige una nota</h2>
+              <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'var(--muted-fg)' }}>Selecciona la nota que quieres como acceso directo</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '280px', overflowY: 'auto' }}>
+                {userNotes.length === 0 && <p style={{ color: 'var(--muted-fg)', fontSize: '0.85rem' }}>No tienes notas aún.</p>}
+                {userNotes.map(n => (
+                  <button key={n._id} onClick={() => addWidget('nota', { nota_id: n._id, nota_titulo: n.titulo })} style={{ padding: '0.75rem 1rem', borderRadius: '10px', border: '0.5px solid var(--card-border)', backgroundColor: 'var(--app-bg)', cursor: 'pointer', textAlign: 'left', fontSize: '0.9rem', color: 'var(--card-title)' }}>
+                    {n.titulo}
+                  </button>
+                ))}
+              </div>
+              <button onClick={() => setModalStep('tipo')} style={{ marginTop: '1rem', fontSize: '0.85rem', background: 'none', border: 'none', color: 'var(--muted-fg)', cursor: 'pointer' }}>← Volver</button>
+            </>)}
+
+            {/* Paso 2b: URL externo */}
+            {modalStep === 'externo' && (<>
+              <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.3rem', fontWeight: 300, color: 'var(--card-title)' }}>Widget externo</h2>
+              <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'var(--muted-fg)' }}>Ingresa el URL del servicio externo</p>
+              <input value={externTitle} onChange={e => setExternTitle(e.target.value)} placeholder="Título (ej. Mi Notion)" style={{ width: '100%', padding: '0.7rem 1rem', borderRadius: '10px', border: '0.5px solid var(--card-border)', backgroundColor: 'var(--app-bg)', color: 'var(--card-title)', fontSize: '0.9rem', outline: 'none', marginBottom: '0.75rem', boxSizing: 'border-box' }} />
+              <input value={externUrl} onChange={e => setExternUrl(e.target.value)} placeholder="https://notion.so/..." style={{ width: '100%', padding: '0.7rem 1rem', borderRadius: '10px', border: '0.5px solid var(--card-border)', backgroundColor: 'var(--app-bg)', color: 'var(--card-title)', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+                <button onClick={() => setModalStep('tipo')} style={{ flex: 1, padding: '0.7rem', borderRadius: '10px', border: '0.5px solid var(--card-border)', backgroundColor: 'transparent', color: 'var(--muted-fg)', cursor: 'pointer' }}>← Volver</button>
+                <button onClick={() => addWidget('externo', { url: externUrl, titulo: externTitle })} disabled={!externUrl} style={{ flex: 2, padding: '0.7rem', borderRadius: '10px', border: 'none', backgroundColor: 'var(--primary)', color: '#fff', cursor: externUrl ? 'pointer' : 'not-allowed', opacity: externUrl ? 1 : 0.5 }}>Agregar</button>
+              </div>
+            </>)}
+
+            <button onClick={() => setShowWidgetModal(false)} style={{ marginTop: '1.25rem', width: '100%', padding: '0.6rem', borderRadius: '20px', border: '0.5px solid var(--card-border)', backgroundColor: 'transparent', color: 'var(--muted-fg)', cursor: 'pointer', fontSize: '0.85rem' }}>
               Cancelar
             </button>
           </div>

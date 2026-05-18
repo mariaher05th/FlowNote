@@ -17,6 +17,26 @@ export class WidgetsController {
     private readonly spacesService: SpacesService,
   ) {}
 
+  @Get('dashboard')
+  dashboardWidgets(@Request() req) {
+    return this.widgetsService.porDashboard(req.user.sub);
+  }
+
+  @Post('dashboard')
+  crearDashboard(@Body() body: { tipo: string; config?: Record<string, unknown> }, @Request() req) {
+    return this.widgetsService.crearDashboard(body.tipo, body.config ?? {}, req.user.sub);
+  }
+
+  @Put('dashboard/:id')
+  actualizarDashboard(@Param('id') id: string, @Body() body: { config: Record<string, unknown> }, @Request() req) {
+    return this.widgetsService.actualizarDashboard(id, body.config, req.user.sub);
+  }
+
+  @Delete('dashboard/:id')
+  eliminarDashboard(@Param('id') id: string, @Request() req) {
+    return this.widgetsService.eliminarDashboard(id, req.user.sub);
+  }
+
   @Post()
   async crear(@Body() dto: CreateWidgetDto, @Request() req) {
     if (dto.nota_id) await this.notesService.obtenerUna(dto.nota_id, req.user.sub);

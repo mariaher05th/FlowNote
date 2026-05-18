@@ -19,8 +19,8 @@ export class RegisterDto {
 }
 
 export class LoginDto {
-  @IsEmail()
-  email: string;
+  @IsString()
+  username: string;
 
   @IsString()
   contrasena: string;

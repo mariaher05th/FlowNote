@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Widget, WidgetDocument } from './schemas/widget.schema';
@@ -23,6 +23,39 @@ export class WidgetsService {
       height: dto.height ?? 120,
       orden: dto.orden ?? 0,
     });
+  }
+
+  async porDashboard(userId: string): Promise<WidgetDocument[]> {
+    return this.widgetModel
+      .find({ usuario_id: new Types.ObjectId(userId), nota_id: null, espacio_id: null })
+      .sort({ orden: 1 });
+  }
+
+  async crearDashboard(tipo: string, config: Record<string, unknown>, userId: string): Promise<WidgetDocument> {
+    const count = await this.widgetModel.countDocuments({ usuario_id: new Types.ObjectId(userId), nota_id: null, espacio_id: null });
+    return this.widgetModel.create({
+      usuario_id: new Types.ObjectId(userId),
+      tipo,
+      config: config ?? {},
+      nota_id: null,
+      espacio_id: null,
+      orden: count,
+    });
+  }
+
+  async actualizarDashboard(id: string, config: Record<string, unknown>, userId: string): Promise<WidgetDocument> {
+    const widget = await this.widgetModel.findById(id);
+    if (!widget) throw new NotFoundException('Widget no encontrado');
+    if (widget.usuario_id?.toString() !== userId) throw new ForbiddenException();
+    return this.widgetModel.findByIdAndUpdate(id, { config }, { new: true });
+  }
+
+  async eliminarDashboard(id: string, userId: string): Promise<{ mensaje: string }> {
+    const widget = await this.widgetModel.findById(id);
+    if (!widget) throw new NotFoundException('Widget no encontrado');
+    if (widget.usuario_id?.toString() !== userId) throw new ForbiddenException();
+    await this.widgetModel.findByIdAndDelete(id);
+    return { mensaje: 'Widget eliminado' };
   }
 
   async porNota(notaId: string): Promise<WidgetDocument[]> {

@@ -10,11 +10,11 @@ export function AuthPage({ initialView }: AuthPageProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const [loginData, setLoginData] = useState({ email: '', contrasena: '' });
+  const [loginData, setLoginData] = useState({ username: '', contrasena: '' });
   const [registerData, setRegisterData] = useState({ nombre: '', apellido: '', email: '', username: '', contrasena: '' });
 
   const handleLogin = async () => {
-    if (!loginData.email || !loginData.contrasena) {
+    if (!loginData.username || !loginData.contrasena) {
       setError('Por favor completa todos los campos');
       return;
     }
@@ -24,7 +24,8 @@ export function AuthPage({ initialView }: AuthPageProps) {
       await authService.login(loginData);
       window.location.href = '/';
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Usuario o contraseña incorrectos');
+      const msg = e.response?.data?.message;
+      setError(Array.isArray(msg) ? msg[0] : msg || 'Usuario o contraseña incorrectos');
     } finally {
       setLoading(false);
     }
@@ -39,10 +40,11 @@ export function AuthPage({ initialView }: AuthPageProps) {
     setError('');
     try {
       await authService.register(registerData);
-      await authService.login({ email: registerData.email, contrasena: registerData.contrasena });
+      await authService.login({ username: registerData.username, contrasena: registerData.contrasena });
       window.location.href = '/';
     } catch (e: any) {
-      setError(e.response?.data?.message || 'Error al registrarse');
+      const msg = e.response?.data?.message;
+      setError(Array.isArray(msg) ? msg[0] : msg || 'Error al registrarse');
     } finally {
       setLoading(false);
     }
@@ -115,13 +117,12 @@ export function AuthPage({ initialView }: AuthPageProps) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div>
               <label style={{ fontSize: '0.8125rem', color: '#9080B0', fontWeight: 300, display: 'block', marginBottom: '6px' }}>
-                Correo electrónico
+                Nombre de usuario
               </label>
               <input
-                type="email"
-                value={loginData.email}
-                onChange={e => setLoginData(p => ({ ...p, email: e.target.value }))}
-                placeholder="maria@correo.com"
+                value={loginData.username}
+                onChange={e => setLoginData(p => ({ ...p, username: e.target.value }))}
+                placeholder="tu_usuario"
                 style={{
                   width: '100%', padding: '0.75rem 1rem', borderRadius: '12px',
                   border: '0.5px solid #D8D0EC', backgroundColor: '#F6F4FB',
