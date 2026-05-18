@@ -1,7 +1,7 @@
 import { Injectable, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import { User, UserDocument } from './schemas/user.schema';
 import { RegisterDto, LoginDto, UpdateThemeDto } from './dto/auth.dto';
@@ -57,6 +57,17 @@ export class AuthService {
 
   async perfil(userId: string) {
     return this.userModel.findById(userId).select('-contrasena_hash');
+  }
+
+  async buscarUsuarios(q: string, excludeUserId: string) {
+    if (!q || q.length < 2) return [];
+    return this.userModel.find({
+      _id: { $ne: new Types.ObjectId(excludeUserId) },
+      $or: [
+        { username: { $regex: q, $options: 'i' } },
+        { nombre:   { $regex: q, $options: 'i' } },
+      ],
+    }).select('_id nombre apellido username').limit(8);
   }
 
   async actualizarTema(userId: string, dto: UpdateThemeDto) {

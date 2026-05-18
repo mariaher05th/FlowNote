@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import api from '../../services/api';
 
 type Tool = 'select' | 'pen' | 'text' | 'note' | 'task' | 'eraser';
 
@@ -17,28 +18,70 @@ interface CanvasItem {
 // Colores fijos de sticky notes — intencionalmente no temáticos (son papel físico)
 const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 
-const initialItems: CanvasItem[] = [
-  { id: '1', type: 'note', x: 80,  y: 80,  width: 200, height: 140, content: 'Ideas iniciales del proyecto FlowNote', color: '#FFF8E7' },
-  { id: '2', type: 'task', x: 340, y: 80,  width: 220, height: 80,  content: 'Diseñar prototipo UI',        status: 'done',       color: '' },
-  { id: '3', type: 'task', x: 340, y: 180, width: 220, height: 80,  content: 'Implementar drag and drop',   status: 'inprogress', color: '' },
-  { id: '4', type: 'task', x: 340, y: 280, width: 220, height: 80,  content: 'Conectar API de clima',       status: 'pending',    color: '' },
-  { id: '5', type: 'note', x: 620, y: 80,  width: 200, height: 140, content: 'Paleta: Lavender Fog\n#EAE4F8 #F8D8EC', color: '#F0EEFF' },
-  { id: '6', type: 'text', x: 80,  y: 280, width: 200, height: 60,  content: 'Sprint 1 — Abril 2025',       color: 'transparent' },
-];
 
-export function Whiteboard() {
+export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?: () => void }) {
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const saveTimer    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLoaded     = useRef(false);
+  const [noteTitle,  setNoteTitle]  = useState('');
+  const [guardando,  setGuardando]  = useState(false);
+  const [guardado,   setGuardado]   = useState(false);
 
   const [tool,       setTool]       = useState<Tool>('select');
-  const [items,      setItems]      = useState<CanvasItem[]>(initialItems);
+  const [items,      setItems]      = useState<CanvasItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragging,   setDragging]   = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [resizing,   setResizing]   = useState<{
+    id: string; handle: string;
+    startX: number; startY: number;
+    startItem: CanvasItem;
+  } | null>(null);
   const [drawing,    setDrawing]    = useState(false);
   const [penColor,   setPenColor]   = useState('#8070C8');
   const [penSize,    setPenSize]    = useState(3);
   const [editingId,  setEditingId]  = useState<string | null>(null);
   const [editText,   setEditText]   = useState('');
+
+  // Cargar nota del backend
+  useEffect(() => {
+    isLoaded.current = false;
+    setItems([]);
+    setNoteTitle('');
+    if (!noteId) return;
+    api.get(`/notes/${noteId}`).then(res => {
+      setNoteTitle(res.data.titulo || '');
+      try {
+        const data = JSON.parse(res.data.contenido || '{}');
+        setItems(Array.isArray(data?.items) ? data.items : []);
+      } catch {
+        setItems([]);
+      }
+      isLoaded.current = true;
+    }).catch(() => { setItems([]); isLoaded.current = true; });
+  }, [noteId]);
+
+  // Guardar cambios con debounce
+  useEffect(() => {
+    if (!noteId || !isLoaded.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      api.put(`/notes/${noteId}`, { contenido: JSON.stringify({ items }) });
+    }, 1200);
+  }, [items, noteId]);
+
+  const guardarAhora = async () => {
+    if (!noteId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setGuardando(true);
+    try {
+      await api.put(`/notes/${noteId}`, { contenido: JSON.stringify({ items }) });
+      setGuardado(true);
+      setTimeout(() => setGuardado(false), 2000);
+    } finally {
+      setGuardando(false);
+    }
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -122,7 +165,31 @@ export function Whiteboard() {
     setSelectedId(id);
   };
 
+  const startResizeHandle = (e: React.MouseEvent, id: string, handle: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    setResizing({ id, handle, startX: e.clientX, startY: e.clientY, startItem: { ...item } });
+  };
+
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (resizing && containerRef.current) {
+      const dx = e.clientX - resizing.startX;
+      const dy = e.clientY - resizing.startY;
+      const { startItem, handle } = resizing;
+      const MIN = 60;
+      setItems(prev => prev.map(i => {
+        if (i.id !== resizing.id) return i;
+        let { x, y, width, height } = startItem;
+        if (handle.includes('e')) width  = Math.max(MIN, startItem.width  + dx);
+        if (handle.includes('s')) height = Math.max(MIN, startItem.height + dy);
+        if (handle.includes('w')) { width  = Math.max(MIN, startItem.width  - dx); x = startItem.x + startItem.width  - width; }
+        if (handle.includes('n')) { height = Math.max(MIN, startItem.height - dy); y = startItem.y + startItem.height - height; }
+        return { ...i, x, y, width, height };
+      }));
+      return;
+    }
     if (!dragging || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     setItems(prev => prev.map(i =>
@@ -132,7 +199,7 @@ export function Whiteboard() {
     ));
   };
 
-  const stopDrag = () => setDragging(null);
+  const stopDrag = () => { setDragging(null); setResizing(null); };
   const deleteItem = (id: string) => { setItems(prev => prev.filter(i => i.id !== id)); setSelectedId(null); };
 
   const cycleStatus = (id: string) => {
@@ -178,7 +245,22 @@ export function Whiteboard() {
         borderBottom: `0.5px solid var(--whiteboard-toolbar-border)`,
         flexShrink: 0, flexWrap: 'wrap',
       }}>
-        <span style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--primary)', marginRight: '8px' }}>Tablero</span>
+        {/* Botón salir */}
+        {onBack && (
+          <button onClick={onBack} style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '6px 12px', borderRadius: '10px', border: 'none',
+            backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)',
+            fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit',
+            marginRight: '4px',
+          }}>
+            ← Mis Notas
+          </button>
+        )}
+
+        <span style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--primary)', marginRight: '8px' }}>
+          {noteTitle || 'Tablero'}
+        </span>
 
         <div style={{ display: 'flex', gap: '4px' }}>
           {tools.map(t => (
@@ -225,6 +307,20 @@ export function Whiteboard() {
            tool === 'task'   ? 'Haz clic para colocar una tarea' :
                                'Haz clic para agregar texto'}
         </span>
+
+        {/* Botón guardar */}
+        {noteId && (
+          <button onClick={guardarAhora} disabled={guardando} style={{
+            display: 'flex', alignItems: 'center', gap: '6px',
+            padding: '6px 14px', borderRadius: '10px', border: 'none',
+            backgroundColor: guardado ? '#D8F8EC' : 'var(--primary)',
+            color: guardado ? '#408060' : '#FFFFFF',
+            fontSize: '0.8rem', cursor: guardando ? 'not-allowed' : 'pointer',
+            fontFamily: 'inherit', transition: 'all 0.2s', marginLeft: '8px',
+          }}>
+            {guardando ? 'Guardando...' : guardado ? '✓ Guardado' : 'Guardar'}
+          </button>
+        )}
       </div>
 
       {/* Canvas area */}
@@ -267,7 +363,8 @@ export function Whiteboard() {
           <div
             key={item.id}
             style={{
-              position: 'absolute', left: item.x, top: item.y, width: item.width,
+              position: 'absolute', left: item.x, top: item.y,
+              width: item.width, height: item.height,
               cursor: tool === 'select' ? (dragging?.id === item.id ? 'grabbing' : 'grab') : 'default',
               userSelect: 'none',
             }}
@@ -279,7 +376,8 @@ export function Whiteboard() {
                 backgroundColor: item.color,
                 border: selectedId === item.id ? `1.5px solid var(--primary)` : '0.5px solid var(--card-border)',
                 borderRadius: '12px', padding: '12px',
-                minHeight: item.height, boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                height: '100%', boxSizing: 'border-box',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <span style={{ fontSize: '10px', color: 'var(--muted-fg)', fontWeight: 300 }}>nota</span>
@@ -317,7 +415,8 @@ export function Whiteboard() {
                 backgroundColor: 'var(--card-bg)',
                 border: selectedId === item.id ? `1.5px solid var(--primary)` : '0.5px solid var(--card-border)',
                 borderRadius: '12px', padding: '10px 12px',
-                minHeight: item.height, boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+                height: '100%', boxSizing: 'border-box',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.06)', overflow: 'hidden',
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                   {editingId === item.id ? (
@@ -360,6 +459,7 @@ export function Whiteboard() {
               <div style={{
                 border: selectedId === item.id ? '1px dashed var(--card-border)' : '1px dashed transparent',
                 borderRadius: '8px', padding: '4px 8px',
+                height: '100%', boxSizing: 'border-box', overflow: 'hidden',
               }}>
                 {editingId === item.id ? (
                   <input
@@ -384,6 +484,32 @@ export function Whiteboard() {
                   }}>✕</button>
                 )}
               </div>
+            )}
+            {/* Handles de resize — estilo Canva, solo cuando está seleccionado */}
+            {selectedId === item.id && tool === 'select' && (
+              <>
+                {[
+                  { h: 'nw', top: -5,            left: -5,                           cursor: 'nwse-resize' },
+                  { h: 'n',  top: -5,            left: item.width / 2 - 5,           cursor: 'ns-resize'   },
+                  { h: 'ne', top: -5,            left: item.width - 5,               cursor: 'nesw-resize' },
+                  { h: 'e',  top: item.height / 2 - 5, left: item.width - 5,         cursor: 'ew-resize'   },
+                  { h: 'se', top: item.height - 5,     left: item.width - 5,         cursor: 'nwse-resize' },
+                  { h: 's',  top: item.height - 5,     left: item.width / 2 - 5,     cursor: 'ns-resize'   },
+                  { h: 'sw', top: item.height - 5,     left: -5,                     cursor: 'nesw-resize' },
+                  { h: 'w',  top: item.height / 2 - 5, left: -5,                    cursor: 'ew-resize'   },
+                ].map(({ h, top, left, cursor }) => (
+                  <div
+                    key={h}
+                    onMouseDown={e => startResizeHandle(e, item.id, h)}
+                    style={{
+                      position: 'absolute', top, left,
+                      width: 10, height: 10, borderRadius: '2px',
+                      backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8',
+                      cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                    }}
+                  />
+                ))}
+              </>
             )}
           </div>
         ))}

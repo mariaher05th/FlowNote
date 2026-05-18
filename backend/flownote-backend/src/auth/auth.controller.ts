@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Put, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Get, Put, Body, Query, UseGuards, Request } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto, LoginDto, UpdateThemeDto } from './dto/auth.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -24,6 +24,12 @@ export class AuthController {
   @Get('perfil')
   perfil(@Request() req) {
     return this.authService.perfil(req.user.sub);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('buscar')
+  buscarUsuarios(@Query('q') q: string, @Request() req) {
+    return this.authService.buscarUsuarios(q, req.user.sub);
   }
 
   @UseGuards(JwtAuthGuard)

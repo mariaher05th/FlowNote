@@ -42,4 +42,9 @@ export const authService = {
   isAuthenticated: () => {
     return !!localStorage.getItem('token');
   },
+
+  buscarUsuarios: async (q: string): Promise<{ _id: string; nombre: string; apellido: string; username: string }[]> => {
+    const res = await api.get(`/auth/buscar?q=${encodeURIComponent(q)}`);
+    return res.data;
+  },
 };

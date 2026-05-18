@@ -21,6 +21,10 @@ export class CreateNoteDto {
   es_colaborativa?: boolean;
 
   @IsOptional()
+  @IsArray()
+  colaboradores?: { usuario_id: string; username: string; nombre: string; rol: string }[];
+
+  @IsOptional()
   @IsString()
   espacio_id?: string;
 

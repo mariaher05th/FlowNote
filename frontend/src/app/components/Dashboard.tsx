@@ -317,6 +317,12 @@ export function Dashboard() {
   const [userNotes, setUserNotes]           = useState<Note[]>([]);
   const [externUrl, setExternUrl]           = useState('');
   const [externTitle, setExternTitle]       = useState('');
+  const [activeNoteId, setActiveNoteId]     = useState<string | null>(null);
+
+  const goToBoard = (noteId: string) => {
+    setActiveNoteId(noteId);
+    setActivePage('tablero');
+  };
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const nombre = user.nombre || '';
@@ -406,11 +412,11 @@ export function Dashboard() {
 
   const pages: Record<string, React.ReactNode> = {
     inicio: <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={openModal} nombre={nombre} onSave={saveWidgetConfig} loading={loadingWidgets} />,
-    notas:         <MyNotes goToBoard={() => setActivePage('tablero')} />,
+    notas:         <MyNotes goToBoard={goToBoard} />,
     workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
     equipo:        <Team />,
     recordatorios: <Reminders />,
-    tablero:       <Whiteboard />,
+    tablero:       <Whiteboard noteId={activeNoteId} onBack={() => setActivePage('notas')} />,
   };
 
 
