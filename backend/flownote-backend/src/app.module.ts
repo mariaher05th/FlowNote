@@ -13,6 +13,7 @@ import { FlowsModule } from './flows/flows.module';
 import { WidgetsModule } from './widgets/widgets.module';
 import { DrawingModule } from './drawing/drawing.module';
 import { TemplatesModule } from './templates/templates.module';
+import { CollaborationModule } from './collaboration/collaboration.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { TemplatesModule } from './templates/templates.module';
     WidgetsModule,
     DrawingModule,
     TemplatesModule,
+    CollaborationModule,
   ],
 })
 export class AppModule {}
