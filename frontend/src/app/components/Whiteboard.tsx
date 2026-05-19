@@ -1,78 +1,130 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import api from '../../services/api';
 
-type Tool = 'select' | 'pen' | 'text' | 'note' | 'task' | 'eraser';
+// ── Tipos ──────────────────────────────────────────────
+type Tool = 'select' | 'pen' | 'eraser' | 'note' | 'task' | 'text';
 
 interface CanvasItem {
   id: string;
   type: 'note' | 'task' | 'text';
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+  x: number; y: number; width: number; height: number;
   content: string;
-  status?: 'pending' | 'inprogress' | 'done';
-  color: string; // nota: el color de los sticky notes se mantiene fijo (son "papel")
+  status?: 'pendiente' | 'en_proceso' | 'finalizada';
+  asignadoA?: string;
+  color: string;
 }
 
 interface Stroke {
-  color: string;
-  size: number;
-  eraser: boolean;
+  color: string; size: number; eraser: boolean;
   points: { x: number; y: number }[];
 }
 
-// Colores fijos de sticky notes — intencionalmente no temáticos (son papel físico)
+interface Colaborador { usuario_id: string; username: string; nombre: string; rol: string; }
+
 const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
+const penColors  = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
 
+// ── Separador de toolbar ────────────────────────────────
+const Sep = () => (
+  <div style={{ width: '1px', height: '22px', backgroundColor: 'var(--whiteboard-toolbar-border)', margin: '0 8px', opacity: 0.5 }} />
+);
 
+// ── Label de sección ────────────────────────────────────
+const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+  <span style={{ fontSize: '0.6rem', color: 'var(--muted-fg)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em', marginRight: '2px', userSelect: 'none' }}>
+    {children}
+  </span>
+);
+
+// ── Botón de toolbar ────────────────────────────────────
+function ToolBtn({ active, onClick, title, children, wide }: { active?: boolean; onClick: () => void; title: string; children: React.ReactNode; wide?: boolean }) {
+  return (
+    <button onClick={onClick} title={title} style={{
+      minWidth: wide ? 'auto' : '32px', height: '32px', padding: wide ? '0 10px' : '0',
+      borderRadius: '8px', border: 'none',
+      backgroundColor: active ? '#8070C8' : 'transparent',
+      color: active ? '#FFFFFF' : 'var(--whiteboard-tool-fg)',
+      cursor: 'pointer', fontSize: '15px', transition: 'all 0.15s',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
+      boxShadow: active ? '0 2px 8px rgba(128,112,200,0.35)' : 'none',
+    }}
+    onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'; }}
+    onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
+    >{children}</button>
+  );
+}
+
+// ── Modal genérico ──────────────────────────────────────
+function Modal({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 3000, backgroundColor: 'rgba(47,40,64,0.35)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ backgroundColor: '#FFFFFF', borderRadius: '20px', padding: '2rem', width: '100%', maxWidth: '440px', boxShadow: '0 24px 64px rgba(47,40,64,0.18)' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Componente principal ────────────────────────────────
 export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?: () => void }) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const saveTimer       = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLoaded        = useRef(false);
-  const itemsRef        = useRef<CanvasItem[]>([]);
-  const strokesRef      = useRef<Stroke[]>([]);
-  const currentStroke   = useRef<Stroke | null>(null);
-  const [noteTitle,  setNoteTitle]  = useState('');
-  const [guardando,  setGuardando]  = useState(false);
-  const [guardado,   setGuardado]   = useState(false);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const containerRef  = useRef<HTMLDivElement>(null);
+  const saveTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLoaded      = useRef(false);
+  const itemsRef      = useRef<CanvasItem[]>([]);
+  const strokesRef    = useRef<Stroke[]>([]);
+  const currentStroke = useRef<Stroke | null>(null);
 
+  // Estado de la nota
+  const [noteTitle,      setNoteTitle]      = useState('');
+  const [esColaborativa, setEsColaborativa] = useState(false);
+  const [colaboradores,  setColaboradores]  = useState<Colaborador[]>([]);
+  const [miRol,          setMiRol]          = useState<string>('admin');
+
+  // Estado del tablero
   const [tool,       setTool]       = useState<Tool>('select');
   const [items,      setItems]      = useState<CanvasItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragging,   setDragging]   = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
-  const [resizing,   setResizing]   = useState<{
-    id: string; handle: string;
-    startX: number; startY: number;
-    startItem: CanvasItem;
-  } | null>(null);
+  const [resizing,   setResizing]   = useState<{ id: string; handle: string; startX: number; startY: number; startItem: CanvasItem } | null>(null);
   const [drawing,    setDrawing]    = useState(false);
-  const [canvasVer,  setCanvasVer]  = useState(0); // incrementa al terminar cada trazo
+  const [canvasVer,  setCanvasVer]  = useState(0);
   const [penColor,   setPenColor]   = useState('#8070C8');
   const [penSize,    setPenSize]    = useState(3);
   const [editingId,  setEditingId]  = useState<string | null>(null);
   const [editText,   setEditText]   = useState('');
+  const [guardando,  setGuardando]  = useState(false);
+  const [guardado,   setGuardado]   = useState(false);
 
-  // Reproduce los trazos en el canvas
+  // Modales
+  const [taskModal,     setTaskModal]     = useState(false);
+  const [taskTitulo,    setTaskTitulo]    = useState('');
+  const [taskEstado,    setTaskEstado]    = useState<'pendiente' | 'en_proceso' | 'finalizada'>('pendiente');
+  const [taskAsignado,  setTaskAsignado]  = useState('');
+  const [reminderModal, setReminderModal] = useState(false);
+  const [remTitulo,     setRemTitulo]     = useState('');
+  const [remFecha,      setRemFecha]      = useState('');
+  const [remHora,       setRemHora]       = useState('09:00');
+  const [remCreando,    setRemCreando]    = useState(false);
+  const [exportMenu,    setExportMenu]    = useState(false);
+  const exportBtnRef = useRef<HTMLDivElement>(null);
+  const [exportPos,   setExportPos]     = useState({ top: 0, left: 0 });
+
+  const user = JSON.parse(localStorage.getItem('user') || '{}');
+
+  // ── Helpers de canvas ──
   const replayStrokes = (strokes: Stroke[]) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     strokes.forEach(s => {
       if (s.points.length < 2) return;
       ctx.beginPath();
-      if (s.eraser) {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.strokeStyle = 'rgba(0,0,0,1)';
-      } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = s.color;
-      }
+      ctx.globalCompositeOperation = s.eraser ? 'destination-out' : 'source-over';
+      ctx.strokeStyle = s.eraser ? 'rgba(0,0,0,1)' : s.color;
       ctx.lineWidth = s.size;
       ctx.moveTo(s.points[0].x, s.points[0].y);
       s.points.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
@@ -81,39 +133,40 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     ctx.globalCompositeOperation = 'source-over';
   };
 
-  // Serializa items + trazos como JSON puro — sin imágenes
   const buildContenido = (currentItems: CanvasItem[]) =>
     JSON.stringify({ items: currentItems, strokes: strokesRef.current });
 
-  // Cargar nota del backend — síncrono, sin race conditions
+  // ── Cargar nota ──
   useEffect(() => {
     isLoaded.current = false;
     strokesRef.current = [];
-    setItems([]);
-    setNoteTitle('');
+    setItems([]); setNoteTitle('');
+    setEsColaborativa(false); setColaboradores([]); setMiRol('admin');
     const canvas = canvasRef.current;
     if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     if (!noteId) return;
     api.get(`/notes/${noteId}`).then(res => {
-      setNoteTitle(res.data.titulo || '');
+      const note = res.data;
+      setNoteTitle(note.titulo || '');
+      setEsColaborativa(!!note.es_colaborativa);
+      const cols: Colaborador[] = note.colaboradores || [];
+      setColaboradores(cols);
+      const yo = cols.find((c: Colaborador) => c.username === user.username);
+      setMiRol(yo ? yo.rol : 'admin');
       try {
-        const data = JSON.parse(res.data.contenido || '{}');
+        const data = JSON.parse(note.contenido || '{}');
         setItems(Array.isArray(data?.items) ? data.items : []);
         if (Array.isArray(data?.strokes) && data.strokes.length > 0) {
           strokesRef.current = data.strokes;
           replayStrokes(data.strokes);
         }
-      } catch {
-        setItems([]);
-      }
-      isLoaded.current = true; // siempre síncrono ahora
+      } catch { setItems([]); }
+      isLoaded.current = true;
     }).catch(() => { setItems([]); isLoaded.current = true; });
   }, [noteId]);
 
-  // Mantener ref sincronizado con items para guardar en cleanup
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  // Guardar cuando cambian items O el canvas (canvasVer)
   useEffect(() => {
     if (!noteId || !isLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -122,7 +175,6 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     }, 500);
   }, [items, noteId, canvasVer]);
 
-  // Guardar inmediatamente al desmontar
   useEffect(() => {
     return () => {
       if (noteId && isLoaded.current) {
@@ -132,30 +184,28 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     };
   }, [noteId]);
 
-  const guardarAhora = async () => {
-    if (!noteId) { alert('noteId es null'); return; }
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    const canvas = canvasRef.current;
-    setGuardando(true);
-    try {
-      await api.put(`/notes/${noteId}`, { contenido: buildContenido(items) });
-      setGuardado(true);
-      setTimeout(() => setGuardado(false), 2000);
-    } finally {
-      setGuardando(false);
-    }
-  };
-
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    ctx.lineCap  = 'round';
-    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.globalCompositeOperation = 'source-over';
   }, []);
 
+  // ── Guardar ──
+  const guardarAhora = async () => {
+    if (!noteId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setGuardando(true);
+    try {
+      await api.put(`/notes/${noteId}`, { contenido: buildContenido(items) });
+      setGuardado(true);
+      setTimeout(() => setGuardado(false), 2000);
+    } finally { setGuardando(false); }
+  };
+
+  // ── Dibujo ──
   const getCanvasPos = (e: React.MouseEvent, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
@@ -170,11 +220,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     const { x, y } = getCanvasPos(e, canvas);
     const isEraser = tool === 'eraser';
     currentStroke.current = { color: penColor, size: isEraser ? 24 : penSize, eraser: isEraser, points: [{ x, y }] };
-    ctx.beginPath();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    if (isEraser) { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = 'rgba(0,0,0,1)'; }
-    else { ctx.globalCompositeOperation = 'source-over'; ctx.strokeStyle = penColor; }
+    ctx.beginPath(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = isEraser ? 'rgba(0,0,0,1)' : penColor;
     ctx.lineWidth = isEraser ? 24 : penSize;
     ctx.moveTo(x, y);
     setDrawing(true);
@@ -188,49 +236,30 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!ctx) return;
     const { x, y } = getCanvasPos(e, canvas);
     currentStroke.current.points.push({ x, y });
-    ctx.lineTo(x, y);
-    ctx.stroke();
+    ctx.lineTo(x, y); ctx.stroke();
   };
 
   const stopDraw = () => {
     if (drawing && currentStroke.current && currentStroke.current.points.length > 1) {
       strokesRef.current = [...strokesRef.current, currentStroke.current];
       currentStroke.current = null;
-      setCanvasVer(v => v + 1); // dispara el save
+      setCanvasVer(v => v + 1);
     }
     setDrawing(false);
   };
 
+  // ── Items ──
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (tool === 'pen' || tool === 'eraser') return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
     if (tool === 'note') {
-      setItems(prev => [...prev, {
-        id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140,
-        content: 'Nueva nota',
-        color: noteColors[Math.floor(Math.random() * noteColors.length)],
-      }]);
+      setItems(prev => [...prev, { id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140, content: 'Nueva nota', color: noteColors[Math.floor(Math.random() * noteColors.length)] }]);
       setTool('select');
-      return;
-    }
-    if (tool === 'task') {
-      setItems(prev => [...prev, {
-        id: Date.now().toString(), type: 'task', x, y, width: 220, height: 80,
-        content: 'Nueva tarea', status: 'pending', color: '',
-      }]);
-      setTool('select');
-      return;
     }
     if (tool === 'text') {
-      setItems(prev => [...prev, {
-        id: Date.now().toString(), type: 'text', x, y, width: 200, height: 50,
-        content: 'Texto libre', color: 'transparent',
-      }]);
+      setItems(prev => [...prev, { id: Date.now().toString(), type: 'text', x, y, width: 200, height: 50, content: 'Texto', color: 'transparent' }]);
       setTool('select');
-      return;
     }
   };
 
@@ -245,56 +274,48 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   };
 
   const startResizeHandle = (e: React.MouseEvent, id: string, handle: string) => {
-    e.stopPropagation();
-    e.preventDefault();
+    e.stopPropagation(); e.preventDefault();
     const item = items.find(i => i.id === id);
     if (!item) return;
     setResizing({ id, handle, startX: e.clientX, startY: e.clientY, startItem: { ...item } });
   };
 
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (resizing && containerRef.current) {
-      const dx = e.clientX - resizing.startX;
-      const dy = e.clientY - resizing.startY;
-      const { startItem, handle } = resizing;
-      const MIN = 60;
+    if (resizing) {
+      const dx = e.clientX - resizing.startX; const dy = e.clientY - resizing.startY;
+      const { startItem: si, handle } = resizing; const MIN = 60;
       setItems(prev => prev.map(i => {
         if (i.id !== resizing.id) return i;
-        let { x, y, width, height } = startItem;
-        if (handle.includes('e')) width  = Math.max(MIN, startItem.width  + dx);
-        if (handle.includes('s')) height = Math.max(MIN, startItem.height + dy);
-        if (handle.includes('w')) { width  = Math.max(MIN, startItem.width  - dx); x = startItem.x + startItem.width  - width; }
-        if (handle.includes('n')) { height = Math.max(MIN, startItem.height - dy); y = startItem.y + startItem.height - height; }
+        let { x, y, width, height } = si;
+        if (handle.includes('e')) width  = Math.max(MIN, si.width  + dx);
+        if (handle.includes('s')) height = Math.max(MIN, si.height + dy);
+        if (handle.includes('w')) { width  = Math.max(MIN, si.width  - dx); x = si.x + si.width  - width; }
+        if (handle.includes('n')) { height = Math.max(MIN, si.height - dy); y = si.y + si.height - height; }
         return { ...i, x, y, width, height };
       }));
       return;
     }
     if (!dragging || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
-    setItems(prev => prev.map(i =>
-      i.id === dragging.id
-        ? { ...i, x: e.clientX - rect.left - dragging.offsetX, y: e.clientY - rect.top - dragging.offsetY }
-        : i
-    ));
+    setItems(prev => prev.map(i => i.id === dragging.id ? { ...i, x: e.clientX - rect.left - dragging.offsetX, y: e.clientY - rect.top - dragging.offsetY } : i));
   };
 
   const stopDrag = () => { setDragging(null); setResizing(null); };
   const deleteItem = (id: string) => { setItems(prev => prev.filter(i => i.id !== id)); setSelectedId(null); };
 
   const cycleStatus = (id: string) => {
-    const cycle = ['pending', 'inprogress', 'done'] as const;
+    const cycle: CanvasItem['status'][] = ['pendiente', 'en_proceso', 'finalizada'];
     setItems(prev => prev.map(i => {
       if (i.id !== id || i.type !== 'task') return i;
-      const current = cycle.indexOf(i.status as typeof cycle[number]);
-      return { ...i, status: cycle[(current + 1) % 3] };
+      const idx = cycle.indexOf(i.status as CanvasItem['status']);
+      return { ...i, status: cycle[(idx + 1) % 3] };
     }));
   };
 
   const startEdit = (e: React.MouseEvent, item: CanvasItem) => {
     e.stopPropagation();
     if (tool !== 'select') return;
-    setEditingId(item.id);
-    setEditText(item.content);
+    setEditingId(item.id); setEditText(item.content);
   };
 
   const saveEdit = () => {
@@ -302,305 +323,360 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setEditingId(null);
   };
 
-  const tools: { key: Tool; label: string; icon: string }[] = [
-    { key: 'select', label: 'Seleccionar', icon: '↖' },
-    { key: 'pen',    label: 'Dibujar',     icon: '✏' },
-    { key: 'eraser', label: 'Borrar',      icon: '⬜' },
-    { key: 'note',   label: 'Nota',        icon: '📄' },
-    { key: 'task',   label: 'Tarea',       icon: '☑' },
-    { key: 'text',   label: 'Texto',       icon: 'T'  },
-  ];
+  // ── Crear tarea ──
+  const crearTarea = () => {
+    if (!taskTitulo.trim()) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    const x = rect ? rect.width / 2 - 120 : 100;
+    const y = rect ? rect.height / 2 - 50 : 100;
+    const newTask: CanvasItem = {
+      id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90,
+      content: taskTitulo.trim(), status: taskEstado,
+      asignadoA: esColaborativa ? (taskAsignado || user.username) : undefined,
+      color: '',
+    };
+    setItems(prev => [...prev, newTask]);
+    // También guarda en el backend como nota
+    api.post('/notes', { titulo: taskTitulo.trim(), estado: taskEstado === 'finalizada' ? 'completado' : taskEstado === 'en_proceso' ? 'en_progreso' : 'pendiente' }).catch(() => {});
+    setTaskModal(false); setTaskTitulo(''); setTaskEstado('pendiente'); setTaskAsignado('');
+  };
 
-  const penColors = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#3D3D3D'];
+  // ── Crear recordatorio ──
+  const crearRecordatorio = async () => {
+    if (!remTitulo.trim() || !remFecha) return;
+    setRemCreando(true);
+    try {
+      const fecha_hora = new Date(`${remFecha}T${remHora}:00`).toISOString();
+      await api.post('/reminders', {
+        nota_id: noteId || '',
+        mensaje: remTitulo.trim(),
+        fecha_hora,
+      });
+      setReminderModal(false); setRemTitulo(''); setRemFecha(''); setRemHora('09:00');
+    } finally { setRemCreando(false); }
+  };
+
+  // ── Exportar ──
+  const exportarMarkdown = () => {
+    const lines: string[] = [`# ${noteTitle || 'Tablero'}\n`];
+    const tasks = items.filter(i => i.type === 'task');
+    const notes = items.filter(i => i.type === 'note');
+    const texts = items.filter(i => i.type === 'text');
+    if (tasks.length) {
+      lines.push('## Tareas\n');
+      tasks.forEach(t => {
+        const estado = t.status === 'finalizada' ? '[x]' : t.status === 'en_proceso' ? '[~]' : '[ ]';
+        const asig = t.asignadoA ? ` @${t.asignadoA}` : '';
+        lines.push(`- ${estado} ${t.content}${asig}`);
+      });
+      lines.push('');
+    }
+    if (notes.length) {
+      lines.push('## Notas\n');
+      notes.forEach(n => lines.push(`> ${n.content}\n`));
+    }
+    if (texts.length) {
+      lines.push('## Texto libre\n');
+      texts.forEach(t => lines.push(`${t.content}\n`));
+    }
+    if (strokesRef.current.length > 0) lines.push(`\n_Contiene ${strokesRef.current.length} trazos de dibujo._\n`);
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${noteTitle || 'tablero'}.md`;
+    a.click();
+    setExportMenu(false);
+  };
+
+  const exportarPDF = () => {
+    setExportMenu(false);
+    const canvas = canvasRef.current;
+    const imgData = canvas ? canvas.toDataURL('image/png') : '';
+
+    const tareasHTML = items.filter(i => i.type === 'task').map(t =>
+      `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #eee">
+        <span style="padding:2px 8px;border-radius:20px;font-size:12px;background:${t.status === 'finalizada' ? '#D1FAE5' : t.status === 'en_proceso' ? '#EDE9FE' : '#FEF3C7'};color:${t.status === 'finalizada' ? '#065F46' : t.status === 'en_proceso' ? '#5B21B6' : '#92400E'}">${t.status === 'finalizada' ? 'Finalizada' : t.status === 'en_proceso' ? 'En proceso' : 'Pendiente'}</span>
+        <span style="font-size:14px">${t.content}</span>
+        ${t.asignadoA ? `<span style="font-size:12px;color:#8070C8">@${t.asignadoA}</span>` : ''}
+      </div>`
+    ).join('');
+
+    const notasHTML = items.filter(i => i.type === 'note').map(n =>
+      `<div style="background:${n.color};border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">${n.content}</div>`
+    ).join('');
+
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(`<!DOCTYPE html><html><head>
+      <title>${noteTitle || 'Tablero'}</title>
+      <style>body{font-family:system-ui,sans-serif;margin:0;padding:24px;color:#2F2840} h1{font-weight:300;color:#8070C8;margin-bottom:4px} .section{margin-top:20px} h3{font-size:14px;color:#B0A0C0;font-weight:500;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px} img{max-width:100%;border-radius:8px;border:1px solid #eee} @media print{body{padding:0}}</style>
+    </head><body>
+      <h1>${noteTitle || 'Tablero'}</h1>
+      <p style="color:#B0A0C0;font-size:13px;margin:0 0 16px">Exportado el ${new Date().toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' })}</p>
+      ${imgData ? `<div class="section"><h3>Dibujo</h3><img src="${imgData}" /></div>` : ''}
+      ${tareasHTML ? `<div class="section"><h3>Tareas</h3>${tareasHTML}</div>` : ''}
+      ${notasHTML  ? `<div class="section"><h3>Notas</h3>${notasHTML}</div>` : ''}
+      <script>window.onload=()=>{window.print()}</script>
+    </body></html>`);
+    win.document.close();
+  };
+
+  // ── Estado de tarea colores ──
+  const statusColors: Record<string, { bg: string; color: string }> = {
+    pendiente:  { bg: '#FEF3C7', color: '#92400E' },
+    en_proceso: { bg: '#EDE9FE', color: '#5B21B6' },
+    finalizada: { bg: '#D1FAE5', color: '#065F46' },
+  };
+
+  const statusLabel: Record<string, string> = { pendiente: 'Pendiente', en_proceso: 'En proceso', finalizada: 'Finalizada' };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: 'var(--whiteboard-bg)' }}>
 
-      {/* Toolbar */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: '8px',
-        padding: '10px 20px',
-        backgroundColor: 'var(--whiteboard-toolbar-bg)',
-        borderBottom: `0.5px solid var(--whiteboard-toolbar-border)`,
-        flexShrink: 0, flexWrap: 'wrap',
-      }}>
-        {/* Botón salir */}
+      {/* ── TOOLBAR ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', backgroundColor: 'var(--whiteboard-toolbar-bg)', borderBottom: '0.5px solid var(--whiteboard-toolbar-border)', flexShrink: 0, flexWrap: 'nowrap', overflowX: 'auto', position: 'relative', zIndex: 50 }}>
+
+        {/* Salir */}
         {onBack && (
-          <button
-            onClick={async () => {
-              if (noteId && isLoaded.current) {
-                if (saveTimer.current) clearTimeout(saveTimer.current);
-                await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
-              }
-              onBack();
-            }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '6px 12px', borderRadius: '10px', border: 'none',
-              backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)',
-              fontSize: '0.8rem', cursor: 'pointer', fontFamily: 'inherit',
-              marginRight: '4px',
-            }}>
+          <button onClick={async () => {
+            if (noteId && isLoaded.current) { if (saveTimer.current) clearTimeout(saveTimer.current); await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) }); }
+            onBack();
+          }} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', marginRight: '4px' }}>
             ← Mis Notas
           </button>
         )}
 
-        <span style={{ fontSize: '0.875rem', fontWeight: 400, color: 'var(--primary)', marginRight: '8px' }}>
+        <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--primary)', marginRight: '4px', whiteSpace: 'nowrap', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {noteTitle || 'Tablero'}
         </span>
 
-        <div style={{ display: 'flex', gap: '4px' }}>
-          {tools.map(t => (
-            <button key={t.key} onClick={() => setTool(t.key)} title={t.label} style={{
-              width: '36px', height: '36px', borderRadius: '10px', border: 'none',
-              backgroundColor: tool === t.key ? 'var(--whiteboard-tool-active-bg)' : 'transparent',
-              color: tool === t.key ? 'var(--whiteboard-tool-active-fg)' : 'var(--whiteboard-tool-fg)',
-              fontSize: t.key === 'text' ? '14px' : '16px',
-              cursor: 'pointer', fontWeight: 400, transition: 'background 0.15s',
-            }}>{t.icon}</button>
-          ))}
+        <Sep />
+
+        {/* ── SECCIÓN DIBUJO ── */}
+        <SectionLabel>Dibujo</SectionLabel>
+        <div style={{ display: 'flex', gap: '2px', backgroundColor: 'var(--app-bg)', borderRadius: '10px', padding: '3px' }}>
+          <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Seleccionar">↖</ToolBtn>
+          <ToolBtn active={tool === 'pen'}    onClick={() => setTool('pen')}    title="Lápiz">✏️</ToolBtn>
+          <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Borrar">⬜</ToolBtn>
         </div>
 
-        <div style={{ width: '0.5px', height: '24px', backgroundColor: 'var(--whiteboard-toolbar-border)', margin: '0 4px' }} />
-
-        {tool === 'pen' && (
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            {penColors.map(c => (
-              <div key={c} onClick={() => setPenColor(c)} style={{
-                width: '20px', height: '20px', borderRadius: '50%', backgroundColor: c,
-                cursor: 'pointer',
-                border: penColor === c ? '2px solid var(--app-fg)' : '2px solid transparent',
-                transition: 'border 0.1s',
-              }} />
-            ))}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px' }}>
-              <span style={{ fontSize: '11px', color: 'var(--muted-fg)' }}>Grosor</span>
-              {[2, 4, 8].map(s => (
-                <div key={s} onClick={() => setPenSize(s)} style={{
-                  width: `${s + 10}px`, height: `${s + 10}px`, borderRadius: '50%',
-                  backgroundColor: penSize === s ? 'var(--primary)' : 'var(--card-border)',
-                  cursor: 'pointer',
-                }} />
+        {(tool === 'pen') && (
+          <>
+            <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: '4px' }}>
+              {penColors.map(c => (
+                <div key={c} onClick={() => setPenColor(c)} style={{ width: '18px', height: '18px', borderRadius: '50%', backgroundColor: c, cursor: 'pointer', border: penColor === c ? '2.5px solid var(--app-fg)' : '2px solid transparent', transition: 'border 0.1s' }} />
               ))}
             </div>
-          </div>
+            <div style={{ display: 'flex', gap: '3px', alignItems: 'center', marginLeft: '4px' }}>
+              {[2, 4, 8].map(s => (
+                <div key={s} onClick={() => setPenSize(s)} style={{ width: `${s + 10}px`, height: `${s + 10}px`, borderRadius: '50%', backgroundColor: penSize === s ? 'var(--primary)' : 'var(--card-border)', cursor: 'pointer' }} />
+              ))}
+            </div>
+          </>
         )}
 
-        <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
-          {tool === 'select' ? 'Arrastra los elementos · Doble clic para editar' :
-           tool === 'pen'    ? 'Dibuja libremente en el tablero' :
-           tool === 'eraser' ? 'Haz clic para borrar trazos' :
-           tool === 'note'   ? 'Haz clic para colocar una nota' :
-           tool === 'task'   ? 'Haz clic para colocar una tarea' :
-                               'Haz clic para agregar texto'}
-        </span>
+        <Sep />
 
-        {/* Botón guardar */}
-        {noteId && (
-          <button onClick={guardarAhora} disabled={guardando} style={{
-            display: 'flex', alignItems: 'center', gap: '6px',
-            padding: '6px 14px', borderRadius: '10px', border: 'none',
-            backgroundColor: guardado ? '#D8F8EC' : 'var(--primary)',
-            color: guardado ? '#408060' : '#FFFFFF',
-            fontSize: '0.8rem', cursor: guardando ? 'not-allowed' : 'pointer',
-            fontFamily: 'inherit', transition: 'all 0.2s', marginLeft: '8px',
-          }}>
-            {guardando ? 'Guardando...' : guardado ? '✓ Guardado' : 'Guardar'}
-          </button>
-        )}
+        {/* ── SECCIÓN CONTENIDO ── */}
+        <SectionLabel>Contenido</SectionLabel>
+        <div style={{ display: 'flex', gap: '2px', backgroundColor: 'var(--app-bg)', borderRadius: '10px', padding: '3px' }}>
+          <ToolBtn active={tool === 'note'} onClick={() => setTool('note')} title="Sticky note">📄</ToolBtn>
+          <ToolBtn active={tool === 'text'} onClick={() => setTool('text')} title="Texto libre" wide><span style={{ fontSize: '13px', fontWeight: 600 }}>T</span></ToolBtn>
+          <ToolBtn active={false} onClick={() => { setTaskModal(true); setTaskTitulo(''); setTaskEstado('pendiente'); setTaskAsignado(''); }} title="Nueva tarea">✅</ToolBtn>
+        </div>
+
+        <Sep />
+
+        {/* ── SECCIÓN ACCIONES ── */}
+        <SectionLabel>Acciones</SectionLabel>
+        <ToolBtn active={false} onClick={() => { setReminderModal(true); setRemTitulo(''); setRemFecha(new Date().toISOString().slice(0, 10)); setRemHora('09:00'); }} title="Crear recordatorio">🔔</ToolBtn>
+
+        {/* Exportar */}
+        <div ref={exportBtnRef}>
+          <ToolBtn active={exportMenu} onClick={() => {
+            const rect = exportBtnRef.current?.getBoundingClientRect();
+            if (rect) setExportPos({ top: rect.bottom + 4, left: rect.left });
+            setExportMenu(v => !v);
+          }} title="Exportar" wide>
+            <span>↓</span><span style={{ fontSize: '0.75rem' }}>Exportar</span>
+          </ToolBtn>
+        </div>
+
+        {/* Guardar */}
+        <div style={{ marginLeft: 'auto' }}>
+          {noteId && (
+            <button onClick={guardarAhora} disabled={guardando} style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: guardado ? '#D8F8EC' : 'var(--primary)', color: guardado ? '#408060' : '#FFFFFF', fontSize: '0.8rem', cursor: guardando ? 'not-allowed' : 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
+              {guardando ? 'Guardando...' : guardado ? '✓ Guardado' : 'Guardar'}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Canvas area */}
-      <div
-        ref={containerRef}
-        style={{
-          flex: 1, position: 'relative', overflow: 'hidden',
-          cursor: tool === 'pen' || tool === 'eraser' ? 'crosshair' : 'default',
-        }}
-        onClick={handleCanvasClick}
-        onMouseMove={onMouseMove}
-        onMouseUp={stopDrag}
-      >
+      {/* ── CANVAS ── */}
+      <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: tool === 'pen' || tool === 'eraser' ? 'crosshair' : 'default' }}
+        onClick={handleCanvasClick} onMouseMove={onMouseMove} onMouseUp={stopDrag}>
+
         {/* Fondo punteado */}
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
-          <defs>
-            <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
-              <circle cx="1" cy="1" r="1" fill="var(--whiteboard-dot)" opacity="0.5" />
-            </pattern>
-          </defs>
+          <defs><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--whiteboard-dot)" opacity="0.5" /></pattern></defs>
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
 
-        {/* Canvas de dibujo libre */}
-        <canvas
-          ref={canvasRef}
-          width={2000} height={2000}
-          style={{
-            position: 'absolute', inset: 0,
-            pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none',
-          }}
-          onMouseDown={startDraw}
-          onMouseMove={draw}
-          onMouseUp={stopDraw}
-          onMouseLeave={stopDraw}
-        />
+        {/* Canvas dibujo */}
+        <canvas ref={canvasRef} width={2000} height={2000}
+          style={{ position: 'absolute', inset: 0, pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none' }}
+          onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw} />
 
         {/* Items */}
         {items.map(item => (
-          <div
-            key={item.id}
-            style={{
-              position: 'absolute', left: item.x, top: item.y,
-              width: item.width, height: item.height,
-              cursor: tool === 'select' ? (dragging?.id === item.id ? 'grabbing' : 'grab') : 'default',
-              userSelect: 'none',
-            }}
-            onMouseDown={e => startDrag(e, item.id)}
-          >
+          <div key={item.id} style={{ position: 'absolute', left: item.x, top: item.y, width: item.width, height: item.height, cursor: tool === 'select' ? (dragging?.id === item.id ? 'grabbing' : 'grab') : 'default', userSelect: 'none' }} onMouseDown={e => startDrag(e, item.id)}>
+
             {/* Sticky note */}
             {item.type === 'note' && (
-              <div style={{
-                backgroundColor: item.color,
-                border: selectedId === item.id ? `1.5px solid var(--primary)` : '0.5px solid var(--card-border)',
-                borderRadius: '12px', padding: '12px',
-                height: '100%', boxSizing: 'border-box',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden',
-              }}>
+              <div style={{ backgroundColor: item.color, border: selectedId === item.id ? '1.5px solid var(--primary)' : '0.5px solid var(--card-border)', borderRadius: '12px', padding: '12px', height: '100%', boxSizing: 'border-box', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <span style={{ fontSize: '10px', color: 'var(--muted-fg)', fontWeight: 300 }}>nota</span>
-                  {selectedId === item.id && (
-                    <button onClick={() => deleteItem(item.id)} style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      fontSize: '12px', color: 'var(--status-pending-fg)', padding: 0,
-                    }}>✕</button>
-                  )}
+                  {selectedId === item.id && <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#C04060', padding: 0 }}>✕</button>}
                 </div>
-                {editingId === item.id ? (
-                  <textarea
-                    autoFocus value={editText}
-                    onChange={e => setEditText(e.target.value)}
-                    onBlur={saveEdit}
-                    style={{
-                      width: '100%', border: 'none', background: 'transparent',
-                      fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300,
-                      resize: 'none', outline: 'none', fontFamily: 'inherit',
-                      lineHeight: 1.5, minHeight: '80px',
-                    }}
-                  />
-                ) : (
-                  <p onDoubleClick={e => startEdit(e, item)} style={{
-                    fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300,
-                    margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap',
-                  }}>{item.content}</p>
-                )}
+                {editingId === item.id
+                  ? <textarea autoFocus value={editText} onChange={e => setEditText(e.target.value)} onBlur={saveEdit} style={{ width: '100%', border: 'none', background: 'transparent', fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300, resize: 'none', outline: 'none', fontFamily: 'inherit', lineHeight: 1.5, minHeight: '80px' }} />
+                  : <p onDoubleClick={e => startEdit(e, item)} style={{ fontSize: '0.875rem', color: 'var(--app-fg)', fontWeight: 300, margin: 0, lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{item.content}</p>
+                }
               </div>
             )}
 
-            {/* Task card */}
+            {/* Tarea */}
             {item.type === 'task' && (
-              <div style={{
-                backgroundColor: 'var(--card-bg)',
-                border: selectedId === item.id ? `1.5px solid var(--primary)` : '0.5px solid var(--card-border)',
-                borderRadius: '12px', padding: '10px 12px',
-                height: '100%', boxSizing: 'border-box',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.06)', overflow: 'hidden',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                  {editingId === item.id ? (
-                    <input
-                      autoFocus value={editText}
-                      onChange={e => setEditText(e.target.value)}
-                      onBlur={saveEdit}
-                      style={{
-                        flex: 1, border: 'none', background: 'transparent',
-                        fontSize: '0.875rem', color: 'var(--card-title)', fontWeight: 400,
-                        outline: 'none', fontFamily: 'inherit',
-                      }}
-                    />
-                  ) : (
-                    <p onDoubleClick={e => startEdit(e, item)} style={{
-                      fontSize: '0.875rem', color: 'var(--card-title)', fontWeight: 400,
-                      margin: 0, flex: 1, paddingRight: '8px',
-                    }}>{item.content}</p>
-                  )}
-                  {selectedId === item.id && (
-                    <button onClick={() => deleteItem(item.id)} style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      fontSize: '12px', color: 'var(--status-pending-fg)', padding: 0, flexShrink: 0,
-                    }}>✕</button>
-                  )}
+              <div style={{ backgroundColor: 'var(--card-bg)', border: selectedId === item.id ? '1.5px solid var(--primary)' : '0.5px solid var(--card-border)', borderRadius: '12px', padding: '10px 12px', height: '100%', boxSizing: 'border-box', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
+                  {editingId === item.id
+                    ? <input autoFocus value={editText} onChange={e => setEditText(e.target.value)} onBlur={saveEdit} style={{ flex: 1, border: 'none', background: 'transparent', fontSize: '0.875rem', color: 'var(--card-title)', fontWeight: 400, outline: 'none', fontFamily: 'inherit' }} />
+                    : <p onDoubleClick={e => startEdit(e, item)} style={{ fontSize: '0.875rem', color: 'var(--card-title)', fontWeight: 400, margin: 0, flex: 1, paddingRight: '8px' }}>{item.content}</p>
+                  }
+                  {selectedId === item.id && <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#C04060', padding: 0, flexShrink: 0 }}>✕</button>}
                 </div>
-                <button onClick={e => { e.stopPropagation(); cycleStatus(item.id); }} style={{
-                  fontSize: '0.75rem', fontWeight: 400, padding: '2px 10px',
-                  borderRadius: '20px', border: 'none', cursor: 'pointer',
-                  backgroundColor: `var(--status-${item.status ?? 'pending'}-bg)`,
-                  color: `var(--status-${item.status ?? 'pending'}-fg)`,
-                }}>
-                  {{ pending: 'Pendiente', inprogress: 'En progreso', done: 'Completado' }[item.status ?? 'pending']}
-                </button>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button onClick={e => { e.stopPropagation(); cycleStatus(item.id); }} style={{ fontSize: '0.72rem', fontWeight: 500, padding: '2px 8px', borderRadius: '20px', border: 'none', cursor: 'pointer', backgroundColor: statusColors[item.status ?? 'pendiente']?.bg, color: statusColors[item.status ?? 'pendiente']?.color }}>
+                    {statusLabel[item.status ?? 'pendiente']}
+                  </button>
+                  {item.asignadoA && <span style={{ fontSize: '0.7rem', color: 'var(--muted-fg)' }}>@{item.asignadoA}</span>}
+                </div>
               </div>
             )}
 
-            {/* Free text */}
+            {/* Texto libre */}
             {item.type === 'text' && (
-              <div style={{
-                border: selectedId === item.id ? '1px dashed var(--card-border)' : '1px dashed transparent',
-                borderRadius: '8px', padding: '4px 8px',
-                height: '100%', boxSizing: 'border-box', overflow: 'hidden',
-              }}>
-                {editingId === item.id ? (
-                  <input
-                    autoFocus value={editText}
-                    onChange={e => setEditText(e.target.value)}
-                    onBlur={saveEdit}
-                    style={{
-                      border: 'none', background: 'transparent',
-                      fontSize: '1rem', color: 'var(--card-title)', fontWeight: 300,
-                      outline: 'none', fontFamily: 'inherit', width: '100%',
-                    }}
-                  />
-                ) : (
-                  <p onDoubleClick={e => startEdit(e, item)} style={{
-                    fontSize: '1rem', color: 'var(--card-title)', fontWeight: 300, margin: 0,
-                  }}>{item.content}</p>
-                )}
-                {selectedId === item.id && (
-                  <button onClick={() => deleteItem(item.id)} style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    fontSize: '12px', color: 'var(--status-pending-fg)', padding: 0,
-                  }}>✕</button>
-                )}
+              <div style={{ border: selectedId === item.id ? '1px dashed var(--card-border)' : '1px dashed transparent', borderRadius: '8px', padding: '4px 8px', height: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+                {editingId === item.id
+                  ? <input autoFocus value={editText} onChange={e => setEditText(e.target.value)} onBlur={saveEdit} style={{ border: 'none', background: 'transparent', fontSize: '1rem', color: 'var(--card-title)', fontWeight: 300, outline: 'none', fontFamily: 'inherit', width: '100%' }} />
+                  : <p onDoubleClick={e => startEdit(e, item)} style={{ fontSize: '1rem', color: 'var(--card-title)', fontWeight: 300, margin: 0 }}>{item.content}</p>
+                }
+                {selectedId === item.id && <button onClick={() => deleteItem(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '12px', color: '#C04060', padding: 0 }}>✕</button>}
               </div>
             )}
-            {/* Handles de resize — estilo Canva, solo cuando está seleccionado */}
+
+            {/* Handles resize */}
             {selectedId === item.id && tool === 'select' && (
-              <>
-                {[
-                  { h: 'nw', top: -5,            left: -5,                           cursor: 'nwse-resize' },
-                  { h: 'n',  top: -5,            left: item.width / 2 - 5,           cursor: 'ns-resize'   },
-                  { h: 'ne', top: -5,            left: item.width - 5,               cursor: 'nesw-resize' },
-                  { h: 'e',  top: item.height / 2 - 5, left: item.width - 5,         cursor: 'ew-resize'   },
-                  { h: 'se', top: item.height - 5,     left: item.width - 5,         cursor: 'nwse-resize' },
-                  { h: 's',  top: item.height - 5,     left: item.width / 2 - 5,     cursor: 'ns-resize'   },
-                  { h: 'sw', top: item.height - 5,     left: -5,                     cursor: 'nesw-resize' },
-                  { h: 'w',  top: item.height / 2 - 5, left: -5,                    cursor: 'ew-resize'   },
-                ].map(({ h, top, left, cursor }) => (
-                  <div
-                    key={h}
-                    onMouseDown={e => startResizeHandle(e, item.id, h)}
-                    style={{
-                      position: 'absolute', top, left,
-                      width: 10, height: 10, borderRadius: '2px',
-                      backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8',
-                      cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
-                    }}
-                  />
-                ))}
-              </>
+              [{ h: 'nw', top: -5, left: -5, cursor: 'nwse-resize' }, { h: 'n', top: -5, left: item.width / 2 - 5, cursor: 'ns-resize' }, { h: 'ne', top: -5, left: item.width - 5, cursor: 'nesw-resize' }, { h: 'e', top: item.height / 2 - 5, left: item.width - 5, cursor: 'ew-resize' }, { h: 'se', top: item.height - 5, left: item.width - 5, cursor: 'nwse-resize' }, { h: 's', top: item.height - 5, left: item.width / 2 - 5, cursor: 'ns-resize' }, { h: 'sw', top: item.height - 5, left: -5, cursor: 'nesw-resize' }, { h: 'w', top: item.height / 2 - 5, left: -5, cursor: 'ew-resize' }]
+              .map(({ h, top, left, cursor }) => (
+                <div key={h} onMouseDown={e => startResizeHandle(e, item.id, h)} style={{ position: 'absolute', top, left, width: 10, height: 10, borderRadius: '2px', backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8', cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
+              ))
             )}
           </div>
         ))}
       </div>
+
+      {/* ── DROPDOWN EXPORTAR (fixed para evitar clipping) ── */}
+      {exportMenu && (
+        <>
+          <div onClick={() => setExportMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 999 }} />
+          <div style={{ position: 'fixed', top: exportPos.top, left: exportPos.left, backgroundColor: 'var(--card-bg)', border: '0.5px solid var(--card-border)', borderRadius: '10px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 1000, overflow: 'hidden', minWidth: '150px' }}>
+            <button onClick={exportarMarkdown} style={{ width: '100%', padding: '0.65rem 1rem', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem', color: 'var(--card-title)', display: 'flex', alignItems: 'center', gap: '8px' }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+              📝 Markdown (.md)
+            </button>
+            <button onClick={exportarPDF} style={{ width: '100%', padding: '0.65rem 1rem', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', fontSize: '0.85rem', color: 'var(--card-title)', display: 'flex', alignItems: 'center', gap: '8px' }}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}>
+              📄 PDF (imprimir)
+            </button>
+          </div>
+        </>
+      )}
+
+      {/* ── MODAL TAREA ── */}
+      {taskModal && (
+        <Modal onClose={() => setTaskModal(false)}>
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 1.25rem' }}>Nueva tarea</h2>
+
+          <input value={taskTitulo} onChange={e => setTaskTitulo(e.target.value)} placeholder="Título de la tarea..." autoFocus
+            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.95rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '1rem' }} />
+
+          {/* Estado */}
+          <p style={{ fontSize: '0.8rem', color: '#B0A0C0', margin: '0 0 0.5rem', fontWeight: 300 }}>Estado</p>
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            {(['pendiente', 'en_proceso', 'finalizada'] as const).map(s => (
+              <button key={s} onClick={() => setTaskEstado(s)} style={{ padding: '5px 12px', borderRadius: '20px', border: `1.5px solid ${taskEstado === s ? statusColors[s].color : '#E4DCF4'}`, backgroundColor: taskEstado === s ? statusColors[s].bg : '#FFFFFF', color: taskEstado === s ? statusColors[s].color : '#B0A0C0', fontSize: '0.8rem', cursor: 'pointer', fontWeight: taskEstado === s ? 500 : 300 }}>
+                {statusLabel[s]}
+              </button>
+            ))}
+          </div>
+
+          {/* Asignación (solo colaborativa) */}
+          {esColaborativa && (
+            <>
+              <p style={{ fontSize: '0.8rem', color: '#B0A0C0', margin: '0 0 0.5rem', fontWeight: 300 }}>
+                {miRol === 'admin' ? 'Asignar a' : 'Asignar (solo a ti mismo)'}
+              </p>
+              <select value={taskAsignado} onChange={e => setTaskAsignado(e.target.value)} disabled={miRol !== 'admin'}
+                style={{ width: '100%', padding: '0.65rem 1rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', color: '#2F2840', fontSize: '0.9rem', outline: 'none', marginBottom: '1rem', cursor: miRol !== 'admin' ? 'not-allowed' : 'pointer' }}>
+                <option value="">Sin asignar</option>
+                {miRol === 'admin'
+                  ? colaboradores.map(c => <option key={c.username} value={c.username}>{c.nombre} (@{c.username})</option>)
+                  : <option value={user.username}>{user.nombre} (yo)</option>
+                }
+              </select>
+            </>
+          )}
+
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+            <button onClick={() => setTaskModal(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cancelar</button>
+            <button onClick={crearTarea} disabled={!taskTitulo.trim()} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: 'none', backgroundColor: taskTitulo.trim() ? '#8070C8' : '#D8D0EC', color: '#FFFFFF', cursor: taskTitulo.trim() ? 'pointer' : 'not-allowed' }}>Agregar tarea</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── MODAL RECORDATORIO ── */}
+      {reminderModal && (
+        <Modal onClose={() => setReminderModal(false)}>
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 1.25rem' }}>Nuevo recordatorio</h2>
+
+          <input value={remTitulo} onChange={e => setRemTitulo(e.target.value)} placeholder="¿Qué necesitas recordar?" autoFocus
+            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.95rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '1rem' }} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div>
+              <p style={{ fontSize: '0.8rem', color: '#B0A0C0', margin: '0 0 0.4rem', fontWeight: 300 }}>Fecha</p>
+              <input type="date" value={remFecha} onChange={e => setRemFecha(e.target.value)} min={new Date().toISOString().slice(0, 10)}
+                style={{ width: '100%', padding: '0.65rem 0.75rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', color: '#2F2840', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <p style={{ fontSize: '0.8rem', color: '#B0A0C0', margin: '0 0 0.4rem', fontWeight: 300 }}>Hora</p>
+              <input type="time" value={remHora} onChange={e => setRemHora(e.target.value)}
+                style={{ width: '100%', padding: '0.65rem 0.75rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', color: '#2F2840', fontSize: '0.9rem', outline: 'none', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button onClick={() => setReminderModal(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cancelar</button>
+            <button onClick={crearRecordatorio} disabled={!remTitulo.trim() || !remFecha || remCreando}
+              style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: 'none', backgroundColor: (remTitulo.trim() && remFecha) ? '#8070C8' : '#D8D0EC', color: '#FFFFFF', cursor: (remTitulo.trim() && remFecha) ? 'pointer' : 'not-allowed' }}>
+              {remCreando ? 'Creando...' : 'Crear recordatorio'}
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
