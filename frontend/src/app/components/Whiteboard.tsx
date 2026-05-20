@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import api from '../../services/api';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { CollaborationBar } from './CollaborationBar';
+import { speechService } from '../../services/speech.service';
 
 // ── Tipos ──────────────────────────────────────────────
 type Tool = 'select' | 'pen' | 'eraser' | 'note' | 'task' | 'text';
@@ -82,6 +83,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const strokesRef    = useRef<Stroke[]>([]);
   const currentStroke = useRef<Stroke | null>(null);
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<any>(null);
+  const finalTranscriptRef = useRef('');
+  const interimTranscriptRef = useRef('');
+  const lastInsertPositionRef = useRef<{ x: number; y: number }>({ x: 120, y: 120 });
+
   // Estado de la nota
   const [noteTitle,      setNoteTitle]      = useState('');
   const [esColaborativa, setEsColaborativa] = useState(false);
@@ -104,6 +112,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [editText,   setEditText]   = useState('');
   const [guardando,  setGuardando]  = useState(false);
   const [guardado,   setGuardado]   = useState(false);
+
+  const [speechOpen, setSpeechOpen] = useState(false);
+  const [speechListening, setSpeechListening] = useState(false);
+  const [speechLoading, setSpeechLoading] = useState(false);
+  const [speechText, setSpeechText] = useState('');
+  const [speechError, setSpeechError] = useState('');
+  const [speechSupported, setSpeechSupported] = useState(true);
   const [lockMsg,    setLockMsg]    = useState<string | null>(null);
   const lockRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draggingItemId = useRef<string | null>(null);
@@ -234,6 +249,30 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const buildContenido = (currentItems: CanvasItem[]) =>
     JSON.stringify({ items: currentItems, strokes: strokesRef.current });
 
+  const calcularEstadoNota = (currentItems: CanvasItem[]): 'pendiente' | 'en_progreso' | 'completado' => {
+    const tareas = currentItems.filter(i => i.type === 'task');
+
+    if (tareas.length === 0) {
+      return 'pendiente';
+    }
+
+    const todasFinalizadas = tareas.every(t => t.status === 'finalizada');
+
+    if (todasFinalizadas) {
+      return 'completado';
+    }
+
+    const algunaEnProcesoOFinalizada = tareas.some(
+      t => t.status === 'en_proceso' || t.status === 'finalizada'
+    );
+
+    if (algunaEnProcesoOFinalizada) {
+      return 'en_progreso';
+    }
+
+    return 'pendiente';
+  };
+
   // ── Cargar nota ──
   useEffect(() => {
     isLoaded.current = false;
@@ -275,9 +314,15 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!noteId || !isLoaded.current || remoteApplying.current || !puedeEditar) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+      const nuevoEstado = calcularEstadoNota(itemsRef.current);
+      api.put(`/notes/${noteId}`, {
+        contenido: buildContenido(itemsRef.current),
+        estado: nuevoEstado,
+      });
+      setNoteEstado(nuevoEstado);
     }, 500);
-    if (!collabRoomReady) return;
+      
+    if (!collabRoomReady) return;    
     if (collabTimer.current) clearTimeout(collabTimer.current);
     collabTimer.current = setTimeout(() => {
       broadcastBoard(itemsRef.current, strokesRef.current);
@@ -296,7 +341,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     return () => {
       if (noteId && isLoaded.current) {
         if (saveTimer.current) clearTimeout(saveTimer.current);
-        api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+
+        const nuevoEstado = calcularEstadoNota(itemsRef.current);
+
+        api.put(`/notes/${noteId}`, {
+          contenido: buildContenido(itemsRef.current),
+          estado: nuevoEstado,
+        });
       }
     };
   }, [noteId]);
@@ -316,7 +367,11 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setGuardando(true);
     try {
-      await api.put(`/notes/${noteId}`, { contenido: buildContenido(items) });
+      const nuevoEstado = calcularEstadoNota(items);
+      await api.put(`/notes/${noteId}`, {
+        contenido: buildContenido(items),
+        estado: nuevoEstado,  });
+      setNoteEstado(nuevoEstado);
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
     } finally { setGuardando(false); }
@@ -443,6 +498,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (tool === 'pen' || tool === 'eraser') return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    lastInsertPositionRef.current = { x, y };
     if (tool === 'note') {
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140, content: 'Nueva nota', color: noteColors[Math.floor(Math.random() * noteColors.length)] }]);
       setTool('select');
@@ -550,15 +606,21 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     const x = rect ? rect.width / 2 - 120 : 100;
     const y = rect ? rect.height / 2 - 50 : 100;
     const newTask: CanvasItem = {
-      id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90,
-      content: taskTitulo.trim(), status: taskEstado,
+      id: Date.now().toString(),
+      type: 'task', x, y,
+      width: 240,
+      height: 90,
+      content: taskTitulo.trim(),
+      status: taskEstado,
       asignadoA: esColaborativa ? (taskAsignado || user.username) : undefined,
       color: '',
     };
     setItems(prev => [...prev, newTask]);
-    // También guarda en el backend como nota
-    api.post('/notes', { titulo: taskTitulo.trim(), estado: taskEstado === 'finalizada' ? 'completado' : taskEstado === 'en_proceso' ? 'en_progreso' : 'pendiente' }).catch(() => {});
-    setTaskModal(false); setTaskTitulo(''); setTaskEstado('pendiente'); setTaskAsignado('');
+
+    setTaskModal(false);
+    setTaskTitulo('');
+    setTaskEstado('pendiente');
+    setTaskAsignado('');
   };
 
   // ── Crear recordatorio ──
@@ -614,6 +676,163 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   // Colores de rol
   const rolColors: Record<string, string> = {
     admin: '#8070C8', editor: '#C070A0', revisor: '#7090B8',
+  };
+
+  const startSpeechRecording = async () => {
+    setSpeechError('');
+    setSpeechOpen(true);
+    setSpeechText('');
+    finalTranscriptRef.current = '';
+    interimTranscriptRef.current = '';
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(track => track.stop());
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        if (!audioBlob.size) {
+          setSpeechError('No se detectó audio para transcribir.');
+          setSpeechLoading(false);
+          return;
+        }
+
+        setSpeechLoading(true);
+
+        try {
+          const result = await speechService.transcribe(audioBlob);
+
+          if (result?.text?.trim()) {
+            setSpeechText(result.text);
+          }
+        } catch (error: any) {
+          const yaHayTexto =
+            finalTranscriptRef.current.trim().length > 0 ||
+            interimTranscriptRef.current.trim().length > 0;
+
+          if (!yaHayTexto) {
+            setSpeechError(
+              error?.response?.data?.message ||
+              'No se pudo transcribir el audio. Inténtalo nuevamente.'
+            );
+          } else {
+            setSpeechError('');
+          }
+        } finally {
+          setSpeechLoading(false);
+        }
+      };
+
+      recorder.start();
+
+      const SpeechRecognition =
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition;
+
+      if (SpeechRecognition) {
+        const recognition = new SpeechRecognition();
+        recognition.lang = 'es-CO';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onresult = (event: any) => {
+          let interimText = '';
+
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript;
+
+            if (event.results[i].isFinal) {
+              finalTranscriptRef.current += transcript + ' ';
+            } else {
+              interimText += transcript;
+            }
+          }
+
+          interimTranscriptRef.current = interimText;
+
+          setSpeechText(
+            `${finalTranscriptRef.current}${interimTranscriptRef.current}`.trim()
+          );
+        };
+
+        recognition.onerror = () => {
+          setSpeechError('Hubo un problema escuchando el micrófono en tiempo real.');
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        setSpeechSupported(true);
+      } else {
+        setSpeechSupported(false);
+      }
+
+      setSpeechListening(true);
+    } catch {
+      setSpeechListening(false);
+      setSpeechError('No se pudo acceder al micrófono. Revisa los permisos del navegador.');
+    }
+  };
+
+  const stopSpeechRecording = () => {
+    setSpeechListening(false);
+
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
+
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const closeSpeechBox = () => {
+    if (speechListening) {
+      stopSpeechRecording();
+    }
+
+    setSpeechOpen(false);
+    setSpeechText('');
+    setSpeechError('');
+    setSpeechLoading(false);
+  };
+
+  const insertSpeechText = () => {
+    if (!speechText.trim()) {
+      setSpeechError('No hay texto para insertar.');
+      return;
+    }
+
+    const { x, y } = lastInsertPositionRef.current;
+
+    setItems(prev => [
+      ...prev,
+      {
+        id: Date.now().toString(),
+        type: 'text',
+        x,
+        y,
+        width: 320,
+        height: 80,
+        content: speechText.trim(),
+        color: 'transparent',
+      },
+    ]);
+
+    setTool('select');
+    closeSpeechBox();
   };
 
   // ── Exportar ──
@@ -718,7 +937,14 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           <button onClick={async () => {
             if (noteId && isLoaded.current && puedeEditar) {
               if (saveTimer.current) clearTimeout(saveTimer.current);
-              await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+              const nuevoEstado = calcularEstadoNota(itemsRef.current);
+
+              await api.put(`/notes/${noteId}`, {
+                contenido: buildContenido(itemsRef.current),
+                estado: nuevoEstado,
+              });
+
+              setNoteEstado(nuevoEstado);
             }
             onBack();
           }} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', marginRight: '4px' }}>
@@ -784,6 +1010,32 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         {/* ── SECCIÓN ACCIONES ── */}
         <SectionLabel>Acciones</SectionLabel>
         <ToolBtn active={false} onClick={() => { setReminderModal(true); setRemTitulo(''); setRemFecha(new Date().toISOString().slice(0, 10)); setRemHora('09:00'); }} title="Crear recordatorio">🔔</ToolBtn>
+
+        <ToolBtn
+          active={speechListening}
+          onClick={() => {
+            if (speechListening) {
+              stopSpeechRecording();
+            } else {
+              startSpeechRecording();
+            }
+          }}
+          title="Dictar con micrófono"
+        >
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '24px',
+              height: '24px',
+              borderRadius: '999px',
+              animation: speechListening ? 'speechPulse 1.2s infinite' : 'none',
+            }}
+          >
+            🎙️
+          </span>
+        </ToolBtn>
 
         {/* Exportar */}
         <div ref={exportBtnRef}>
@@ -945,6 +1197,141 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           </div>
         ))}
       </div>
+
+      {/* ── SPEECH TO TEXT ── */}
+      {speechOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: '24px',
+            transform: 'translateX(-50%)',
+            width: 'min(720px, calc(100vw - 48px))',
+            backgroundColor: '#FFFFFF',
+            border: '1px solid #E4DCF4',
+            borderRadius: '18px',
+            boxShadow: '0 18px 48px rgba(47,40,64,0.18)',
+            zIndex: 1200,
+            padding: '16px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', marginBottom: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.1rem' }}>🎙️</span>
+              <div>
+                <p style={{ margin: 0, color: '#2F2840', fontSize: '0.95rem', fontWeight: 500 }}>
+                  Dictado por voz
+                </p>
+                <p style={{ margin: 0, color: '#B0A0C0', fontSize: '0.75rem' }}>
+                  {speechListening
+                    ? 'Escuchando... habla con calma'
+                    : speechLoading
+                      ? 'Procesando audio...'
+                      : 'Puedes editar el texto antes de insertarlo'}
+                </p>
+              </div>
+            </div>
+
+            {(speechListening || speechLoading) && (
+              <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                {[0, 1, 2].map(i => (
+                  <span
+                    key={i}
+                    style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '999px',
+                      backgroundColor: '#8070C8',
+                      display: 'inline-block',
+                      animation: `speechDots 1s ${i * 0.15}s infinite ease-in-out`,
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {!speechSupported && (
+            <div style={{ padding: '8px 10px', backgroundColor: '#FFF8E7', color: '#92400E', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '10px' }}>
+              Tu navegador no soporta vista previa en tiempo real, pero el audio sí se enviará al backend para transcripción.
+            </div>
+          )}
+
+          {speechError && (
+            <div style={{ padding: '8px 10px', backgroundColor: '#FDE2E8', color: '#A8324E', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '10px' }}>
+              {speechError}
+            </div>
+          )}
+
+          <textarea
+            value={speechText}
+            onChange={e => setSpeechText(e.target.value)}
+            placeholder="Aquí aparecerá la transcripción..."
+            disabled={speechLoading}
+            style={{
+              width: '100%',
+              minHeight: '96px',
+              resize: 'vertical',
+              border: '1px solid #E4DCF4',
+              backgroundColor: '#F8F6FC',
+              borderRadius: '12px',
+              padding: '12px',
+              color: '#2F2840',
+              outline: 'none',
+              fontFamily: 'inherit',
+              fontSize: '0.92rem',
+              boxSizing: 'border-box',
+            }}
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+            <button
+              onClick={closeSpeechBox}
+              disabled={speechLoading}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: '1px solid #E4DCF4',
+                backgroundColor: 'transparent',
+                color: '#B0A0C0',
+                cursor: speechLoading ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Cerrar
+            </button>
+
+            <button
+              onClick={stopSpeechRecording}
+              disabled={!speechListening}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: 'none',
+                backgroundColor: speechListening ? '#FDE2E8' : '#EFEAF8',
+                color: speechListening ? '#A8324E' : '#B0A0C0',
+                cursor: speechListening ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Detener
+            </button>
+
+            <button
+              onClick={insertSpeechText}
+              disabled={speechLoading || !speechText.trim()}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: 'none',
+                backgroundColor: !speechLoading && speechText.trim() ? '#8070C8' : '#D8D0EC',
+                color: '#FFFFFF',
+                cursor: !speechLoading && speechText.trim() ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {speechLoading ? 'Transcribiendo...' : 'Insertar en canvas'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── DROPDOWN EXPORTAR (fixed para evitar clipping) ── */}
       {exportMenu && (

@@ -70,10 +70,26 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
 
   const filtered = notes.filter(n => {
     const matchSearch = n.titulo.toLowerCase().includes(search.toLowerCase());
-    if (filter === 'compartidas') return matchSearch && soyInvitado(n);
-    const matchEstado = filter === 'all' || n.estado === filter;
-    return matchSearch && matchEstado;
+
+    if (filter === 'compartidas') {
+      return matchSearch && soyInvitado(n);
+    }
+
+    const matchFilter =
+      filter === 'all' ||
+      n.estado === filter ||
+      (filter === 'pendiente' && n.estado === 'pendiente') ||
+      (filter === 'en_progreso' && n.estado === 'en_progreso') ||
+      (filter === 'completado' && n.estado === 'completado');
+
+    return matchSearch && matchFilter;
   });
+
+  const esAdmin = (nota: Note) => {
+    if (!nota.es_colaborativa) return true;
+    const yo = nota.colaboradores?.find(c => c.username === user.username);
+    return !yo || yo.rol === 'admin';
+  };
 
   return (
     <div style={{ padding: '3rem' }}>

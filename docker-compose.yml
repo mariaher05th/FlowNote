@@ -20,6 +20,8 @@ services:
     build:
       context: ./backend/flownote-backend/
       dockerfile: Dockerfile
+    env_file:
+      - ./backend/flownote-backend/.env
     depends_on:
       db:
         condition: service_healthy

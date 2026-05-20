@@ -156,30 +156,112 @@ function NotaRapidaWidget({ widget, onSave }: { widget: DashboardWidget; onSave:
 function RecordatoriosWidget() {
   const [items, setItems] = useState<Reminder[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const formatFechaCorta = (fechaStr: string) => {
+    const fecha = new Date(fechaStr);
+
+    if (Number.isNaN(fecha.getTime())) {
+      return 'Fecha no disponible';
+    }
+
+    const hoy = new Date();
+    const manana = new Date(hoy);
+    manana.setDate(hoy.getDate() + 1);
+
+    const hora = fecha.toLocaleTimeString('es-MX', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    if (fecha.toDateString() === hoy.toDateString()) {
+      return `Hoy ${hora}`;
+    }
+
+    if (fecha.toDateString() === manana.toDateString()) {
+      return `Mañana ${hora}`;
+    }
+
+    return fecha.toLocaleDateString('es-MX', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    }) + ` ${hora}`;
+  };
+
   useEffect(() => {
     remindersService.getAll()
-      .then(data => setItems(data.filter(r => !r.completado).slice(0, 4)))
+      .then(data => {
+        const pendientes = data
+          .filter(r => !r.enviado)
+          .sort((a, b) => new Date(a.fecha_hora).getTime() - new Date(b.fecha_hora).getTime())
+          .slice(0, 4);
+
+        setItems(pendientes);
+      })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   }, []);
+
   if (loading) return <EmptyState icon="⏳" texto="Cargando..." />;
   if (!items.length) return <EmptyState icon="🔔" texto="Sin recordatorios pendientes" />;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
       {items.map(r => (
-        <div key={r._id} style={{
-          display: 'flex', gap: '10px', alignItems: 'flex-start',
-          padding: '8px 10px', borderRadius: '10px',
-          backgroundColor: 'var(--app-bg)', transition: 'background 0.15s',
-        }}
-        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
-        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--app-bg)'}
+        <div
+          key={r._id}
+          style={{
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'flex-start',
+            padding: '8px 10px',
+            borderRadius: '10px',
+            backgroundColor: 'var(--app-bg)',
+            transition: 'background 0.15s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'}
+          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--app-bg)'}
         >
-          <div style={{ width: '28px', height: '28px', borderRadius: '8px', backgroundColor: '#EDE9FE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.75rem' }}>🔔</div>
-          <div style={{ minWidth: 0 }}>
-            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--dim-fg)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.titulo}</p>
-            <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
-              {new Date(r.fecha).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' })}
+          <div
+            style={{
+              width: '28px',
+              height: '28px',
+              borderRadius: '8px',
+              backgroundColor: '#EDE9FE',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              fontSize: '0.75rem',
+            }}
+          >
+            🔔
+          </div>
+
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <p
+              style={{
+                margin: 0,
+                fontSize: '0.85rem',
+                color: 'var(--dim-fg)',
+                fontWeight: 400,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {r.mensaje}
+            </p>
+
+            <p
+              style={{
+                margin: '2px 0 0',
+                fontSize: '0.72rem',
+                color: 'var(--muted-fg)',
+                fontWeight: 300,
+              }}
+            >
+              {formatFechaCorta(r.fecha_hora)}
             </p>
           </div>
         </div>
