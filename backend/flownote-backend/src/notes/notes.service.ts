@@ -30,13 +30,19 @@ export class NotesService {
       if (!contenido) contenido = plantilla.contenido;
     }
 
+    // Creador siempre tiene invitacion aceptada; invitados quedan pendientes
+    const colaboradoresConEstado = (dto.colaboradores ?? []).map(c => ({
+      ...c,
+      invitacion: c.usuario_id === userId ? 'aceptada' : 'pendiente',
+    }));
+
     const nota = await this.noteModel.create({
       titulo,
       contenido,
       estado: dto.estado,
       etiquetas: dto.etiquetas ?? [],
       es_colaborativa: dto.es_colaborativa ?? false,
-      colaboradores: dto.es_colaborativa ? (dto.colaboradores ?? []) : [],
+      colaboradores: dto.es_colaborativa ? colaboradoresConEstado : [],
       autor_id: new Types.ObjectId(userId),
       espacio_id: dto.espacio_id ? new Types.ObjectId(dto.espacio_id) : null,
     });
@@ -179,6 +185,100 @@ return actualizada;
       }
     }
     return tablero;
+  }
+
+  // ── Invitaciones ──────────────────────────────────────
+
+  async obtenerInvitaciones(userId: string, username: string): Promise<NoteDocument[]> {
+    return this.noteModel.find({
+      es_colaborativa: true,
+      colaboradores: {
+        $elemMatch: {
+          $or: [{ usuario_id: userId }, { username }],
+          invitacion: 'pendiente',
+        },
+      },
+    }).sort({ createdAt: -1 });
+  }
+
+  async responderInvitacion(
+    noteId: string,
+    userId: string,
+    username: string,
+    respuesta: 'aceptada' | 'rechazada',
+  ): Promise<NoteDocument> {
+    const nota = await this.noteModel.findById(noteId);
+    if (!nota) throw new NotFoundException('Nota no encontrada');
+
+    const idx = nota.colaboradores.findIndex(
+      c => c.usuario_id === userId || c.username === username,
+    );
+    if (idx === -1) throw new ForbiddenException('No eres colaborador de esta nota');
+
+    nota.colaboradores[idx].invitacion = respuesta;
+    await nota.save();
+    return nota;
+  }
+
+  async agregarColaborador(
+    noteId: string,
+    userId: string,
+    username: string,
+    colaborador: { usuario_id: string; username: string; nombre: string; rol: string },
+  ): Promise<NoteDocument> {
+    const nota = await this.noteModel.findById(noteId);
+    if (!nota) throw new NotFoundException('Nota no encontrada');
+
+    const esAdmin = nota.autor_id.toString() === userId ||
+      nota.colaboradores.some(c => (c.usuario_id === userId || c.username === username) && c.rol === 'admin');
+    if (!esAdmin) throw new ForbiddenException('Solo los administradores pueden agregar colaboradores');
+
+    const yaExiste = nota.colaboradores.some(c => c.usuario_id === colaborador.usuario_id || c.username === colaborador.username);
+    if (yaExiste) throw new Error('El usuario ya es colaborador');
+
+    nota.colaboradores.push({ ...colaborador, invitacion: 'pendiente' });
+    await nota.save();
+    return nota;
+  }
+
+  async cambiarRolColaborador(
+    noteId: string,
+    userId: string,
+    username: string,
+    targetUsername: string,
+    nuevoRol: string,
+  ): Promise<NoteDocument> {
+    const nota = await this.noteModel.findById(noteId);
+    if (!nota) throw new NotFoundException('Nota no encontrada');
+
+    const esAdmin = nota.autor_id.toString() === userId ||
+      nota.colaboradores.some(c => (c.usuario_id === userId || c.username === username) && c.rol === 'admin');
+    if (!esAdmin) throw new ForbiddenException('Solo los administradores pueden cambiar roles');
+
+    const idx = nota.colaboradores.findIndex(c => c.username === targetUsername);
+    if (idx === -1) throw new NotFoundException('Colaborador no encontrado');
+
+    nota.colaboradores[idx].rol = nuevoRol;
+    await nota.save();
+    return nota;
+  }
+
+  async eliminarColaborador(
+    noteId: string,
+    userId: string,
+    username: string,
+    targetUsername: string,
+  ): Promise<NoteDocument> {
+    const nota = await this.noteModel.findById(noteId);
+    if (!nota) throw new NotFoundException('Nota no encontrada');
+
+    const esAdmin = nota.autor_id.toString() === userId ||
+      nota.colaboradores.some(c => (c.usuario_id === userId || c.username === username) && c.rol === 'admin');
+    if (!esAdmin) throw new ForbiddenException('Solo los administradores pueden eliminar colaboradores');
+
+    nota.colaboradores = nota.colaboradores.filter(c => c.username !== targetUsername);
+    await nota.save();
+    return nota;
   }
 
   private async convertirAColaborativa(nota: NoteDocument): Promise<NoteDocument> {

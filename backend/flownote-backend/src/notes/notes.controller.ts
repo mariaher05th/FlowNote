@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Delete,
+  Controller, Get, Post, Put, Patch, Delete,
   Body, Param, Query, UseGuards, Request, Res,
 } from '@nestjs/common';
 import { Response } from 'express';
@@ -29,6 +29,36 @@ export class NotesController {
   obtenerMias(@Request() req) {
     const { userId, username } = this.ctx(req);
     return this.notesService.obtenerMias(userId, username);
+  }
+
+  @Get('invitaciones')
+  obtenerInvitaciones(@Request() req) {
+    const { userId, username } = this.ctx(req);
+    return this.notesService.obtenerInvitaciones(userId, username);
+  }
+
+  @Patch(':id/invitacion')
+  responderInvitacion(@Param('id') id: string, @Body() body: { respuesta: 'aceptada' | 'rechazada' }, @Request() req) {
+    const { userId, username } = this.ctx(req);
+    return this.notesService.responderInvitacion(id, userId, username, body.respuesta);
+  }
+
+  @Post(':id/colaboradores')
+  agregarColaborador(@Param('id') id: string, @Body() body: { usuario_id: string; username: string; nombre: string; rol: string }, @Request() req) {
+    const { userId, username } = this.ctx(req);
+    return this.notesService.agregarColaborador(id, userId, username, body);
+  }
+
+  @Patch(':id/colaboradores/:targetUsername/rol')
+  cambiarRol(@Param('id') id: string, @Param('targetUsername') target: string, @Body() body: { rol: string }, @Request() req) {
+    const { userId, username } = this.ctx(req);
+    return this.notesService.cambiarRolColaborador(id, userId, username, target, body.rol);
+  }
+
+  @Delete(':id/colaboradores/:targetUsername')
+  eliminarColaborador(@Param('id') id: string, @Param('targetUsername') target: string, @Request() req) {
+    const { userId, username } = this.ctx(req);
+    return this.notesService.eliminarColaborador(id, userId, username, target);
   }
 
   @Get('buscar')

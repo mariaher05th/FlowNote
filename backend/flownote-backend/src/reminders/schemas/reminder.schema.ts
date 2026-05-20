@@ -5,8 +5,8 @@ export type ReminderDocument = Reminder & Document;
 
 @Schema({ timestamps: true })
 export class Reminder {
-  @Prop({ type: Types.ObjectId, ref: 'Note', required: true })
-  nota_id: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Note', default: null })
+  nota_id: Types.ObjectId | null;
 
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   usuario_id: Types.ObjectId;
