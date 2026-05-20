@@ -112,12 +112,23 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [taskTitulo,    setTaskTitulo]    = useState('');
   const [taskEstado,    setTaskEstado]    = useState<'pendiente' | 'en_proceso' | 'finalizada'>('pendiente');
   const [taskAsignado,  setTaskAsignado]  = useState('');
-  const [reminderModal, setReminderModal] = useState(false);
-  const [remTitulo,     setRemTitulo]     = useState('');
-  const [remFecha,      setRemFecha]      = useState('');
-  const [remHora,       setRemHora]       = useState('09:00');
-  const [remCreando,    setRemCreando]    = useState(false);
-  const [exportMenu,    setExportMenu]    = useState(false);
+  const [reminderModal, setReminderModal]   = useState(false);
+  const [remTitulo,     setRemTitulo]       = useState('');
+  const [remDesc,       setRemDesc]         = useState('');
+  const [remFecha,      setRemFecha]        = useState('');
+  const [remHora,       setRemHora]         = useState('09:00');
+  const [remCreando,    setRemCreando]      = useState(false);
+  const [remExito,      setRemExito]        = useState(false);
+  const [addCollabModal, setAddCollabModal] = useState(false);
+  const [collabBusqueda, setCollabBusqueda] = useState('');
+  const [collabResultados, setCollabResultados] = useState<any[]>([]);
+  const [collabBuscando, setCollabBuscando] = useState(false);
+  const collabDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [teamPanel,     setTeamPanel]       = useState(false);
+  const [completarConfirm, setCompletarConfirm] = useState(false);
+  const [noteEstado,    setNoteEstado]      = useState('pendiente');
+  const [tooltip,       setTooltip]         = useState<{ text: string; x: number; y: number } | null>(null);
+  const [exportMenu,    setExportMenu]      = useState(false);
   const exportBtnRef = useRef<HTMLDivElement>(null);
   const [exportPos,   setExportPos]     = useState({ top: 0, left: 0 });
 
@@ -125,7 +136,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const miUserId = String(user.id || user._id || '');
   const puedeEditar = ['admin', 'editor'].includes(miRol);
   const rolLabel: Record<string, string> = {
-    admin: 'Administrador', editor: 'Editor', revisor: 'Revisor', observador: 'Observador',
+    admin: 'Administrador', editor: 'Editor', revisor: 'Revisor',
   };
 
   const replayStrokes = (strokes: Stroke[]) => {
@@ -243,7 +254,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       const yo = cols.find(
         (c: Colaborador) => String(c.usuario_id) === miUserId || c.username === user.username,
       );
-      setMiRol(yo?.rol ?? (esAutor ? 'admin' : 'observador'));
+      setMiRol(yo?.rol ?? (esAutor ? 'admin' : 'revisor'));
       setEsInvitado(!esAutor && !!yo);
       try {
         const data = JSON.parse(note.contenido || '{}');
@@ -552,13 +563,53 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setRemCreando(true);
     try {
       const fecha_hora = new Date(`${remFecha}T${remHora}:00`).toISOString();
-      await api.post('/reminders', {
-        nota_id: noteId || '',
-        mensaje: remTitulo.trim(),
-        fecha_hora,
-      });
-      setReminderModal(false); setRemTitulo(''); setRemFecha(''); setRemHora('09:00');
+      await api.post('/reminders', { nota_id: noteId || '', mensaje: remTitulo.trim(), fecha_hora });
+      setReminderModal(false); setRemTitulo(''); setRemDesc(''); setRemFecha(''); setRemHora('09:00');
+      setRemExito(true);
+      setTimeout(() => setRemExito(false), 3000);
     } finally { setRemCreando(false); }
+  };
+
+  // ── Búsqueda de colaboradores ──
+  const buscarColaboradores = (q: string) => {
+    setCollabBusqueda(q);
+    if (collabDebounce.current) clearTimeout(collabDebounce.current);
+    if (q.length < 2) { setCollabResultados([]); return; }
+    setCollabBuscando(true);
+    collabDebounce.current = setTimeout(async () => {
+      try {
+        const res = await api.get(`/auth/buscar?q=${encodeURIComponent(q)}`);
+        const yaEsta = new Set(colaboradores.map(c => c.username));
+        setCollabResultados(res.data.filter((u: any) => !yaEsta.has(u.username)));
+      } catch { setCollabResultados([]); }
+      finally { setCollabBuscando(false); }
+    }, 350);
+  };
+
+  const agregarColaborador = async (u: any, rol: string) => {
+    if (!noteId) return;
+    try {
+      await api.post(`/notes/${noteId}/colaboradores`, {
+        usuario_id: String(u._id), username: u.username,
+        nombre: `${u.nombre} ${u.apellido || ''}`.trim(), rol,
+      });
+      setColaboradores(prev => [...prev, { usuario_id: String(u._id), username: u.username, nombre: `${u.nombre} ${u.apellido || ''}`.trim(), rol }]);
+      setCollabResultados([]); setCollabBusqueda('');
+    } catch {}
+  };
+
+  const completarNota = async () => {
+    if (!noteId) return;
+    try {
+      await api.put(`/notes/${noteId}`, { estado: noteEstado === 'completado' ? 'pendiente' : 'completado' });
+      setNoteEstado(prev => prev === 'completado' ? 'pendiente' : 'completado');
+      setCompletarConfirm(false);
+    } catch {}
+  };
+
+  // Colores de rol
+  const rolColors: Record<string, string> = {
+    admin: '#8070C8', editor: '#C070A0', revisor: '#7090B8',
   };
 
   // ── Exportar ──
@@ -739,6 +790,48 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           />
         )}
 
+        {/* ── COLABORADORES (avatares con tooltip y anillo de rol) ── */}
+        {esColaborativa && colaboradores.length > 0 && (
+          <>
+            <Sep />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '2px', position: 'relative' }}>
+              {colaboradores.slice(0, 3).map(c => (
+                <div key={c.username}
+                  onMouseEnter={e => { const r = e.currentTarget.getBoundingClientRect(); setTooltip({ text: `${c.nombre} · ${c.rol}`, x: r.left, y: r.bottom + 6 }); }}
+                  onMouseLeave={() => setTooltip(null)}
+                  style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#E0D8F8', border: `2.5px solid ${rolColors[c.rol] || '#8070C8'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', fontWeight: 600, color: '#2F2840', cursor: 'default', marginLeft: '-4px' }}>
+                  {c.nombre.charAt(0).toUpperCase()}
+                </div>
+              ))}
+              {colaboradores.length > 3 && (
+                <div style={{ width: '28px', height: '28px', borderRadius: '50%', backgroundColor: '#F0EBF8', border: '2px solid #C8B8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.6rem', fontWeight: 600, color: '#8070C8', marginLeft: '-4px' }}>
+                  +{colaboradores.length - 3}
+                </div>
+              )}
+              {miRol === 'admin' && (
+                <button onClick={() => { setAddCollabModal(true); setCollabBusqueda(''); setCollabResultados([]); }}
+                  style={{ width: '26px', height: '26px', borderRadius: '50%', border: '1.5px dashed #B0A0C0', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#B0A0C0', fontSize: '14px', marginLeft: '4px' }}
+                  title="Agregar colaborador">+</button>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ── COMPLETAR PROYECTO (solo admin) ── */}
+        {esColaborativa && miRol === 'admin' && (
+          <button onClick={() => setCompletarConfirm(true)}
+            style={{ padding: '5px 10px', borderRadius: '8px', border: 'none', fontSize: '0.75rem', cursor: 'pointer', backgroundColor: noteEstado === 'completado' ? '#D1FAE5' : '#F6F4FB', color: noteEstado === 'completado' ? '#065F46' : 'var(--muted-fg)', fontWeight: 500 }}>
+            {noteEstado === 'completado' ? '↩ Reabrir' : '✓ Completar'}
+          </button>
+        )}
+
+        {/* Mensaje éxito recordatorio */}
+        {remExito && (
+          <span style={{ fontSize: '0.78rem', color: '#065F46', backgroundColor: '#D1FAE5', padding: '4px 10px', borderRadius: '20px' }}>
+            ✓ Recordatorio creado
+          </span>
+        )}
+
         {/* Guardar */}
         <div style={{ marginLeft: 'auto' }}>
           {noteId && puedeEditar && (
@@ -747,6 +840,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             </button>
           )}
         </div>
+
+        {/* Tooltip colaborador */}
+        {tooltip && (
+          <div style={{ position: 'fixed', top: tooltip.y, left: tooltip.x, backgroundColor: '#2F2840', color: '#FFFFFF', fontSize: '0.75rem', padding: '4px 10px', borderRadius: '8px', zIndex: 9999, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+            {tooltip.text}
+          </div>
+        )}
       </div>
 
       {/* ── CANVAS ── */}
@@ -888,15 +988,18 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         </Modal>
       )}
 
-      {/* ── MODAL RECORDATORIO ── */}
+      {/* ── MODAL RECORDATORIO (con descripción) ── */}
       {reminderModal && (
         <Modal onClose={() => setReminderModal(false)}>
           <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 1.25rem' }}>Nuevo recordatorio</h2>
 
           <input value={remTitulo} onChange={e => setRemTitulo(e.target.value)} placeholder="¿Qué necesitas recordar?" autoFocus
-            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.95rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '1rem' }} />
+            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.95rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '0.75rem' }} />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+          <textarea value={remDesc} onChange={e => setRemDesc(e.target.value)} placeholder="Descripción (opcional)..."
+            style={{ width: '100%', padding: '0.65rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.875rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'none', minHeight: '70px', marginBottom: '0.75rem' }} />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
             <div>
               <p style={{ fontSize: '0.8rem', color: '#B0A0C0', margin: '0 0 0.4rem', fontWeight: 300 }}>Fecha</p>
               <input type="date" value={remFecha} onChange={e => setRemFecha(e.target.value)} min={new Date().toISOString().slice(0, 10)}
@@ -909,11 +1012,73 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             </div>
           </div>
 
+          {noteTitle && (
+            <div style={{ backgroundColor: '#F6F4FB', borderRadius: '10px', padding: '0.5rem 0.75rem', marginBottom: '1rem', fontSize: '0.8rem', color: '#8070C8' }}>
+              📄 Nota: <strong>{noteTitle}</strong>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
             <button onClick={() => setReminderModal(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cancelar</button>
             <button onClick={crearRecordatorio} disabled={!remTitulo.trim() || !remFecha || remCreando}
               style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: 'none', backgroundColor: (remTitulo.trim() && remFecha) ? '#8070C8' : '#D8D0EC', color: '#FFFFFF', cursor: (remTitulo.trim() && remFecha) ? 'pointer' : 'not-allowed' }}>
               {remCreando ? 'Creando...' : 'Crear recordatorio'}
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── MODAL AGREGAR COLABORADOR ── */}
+      {addCollabModal && (
+        <Modal onClose={() => setAddCollabModal(false)}>
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 1.25rem' }}>Agregar colaborador</h2>
+          <input value={collabBusqueda} onChange={e => buscarColaboradores(e.target.value)}
+            placeholder="Buscar por @usuario o nombre..." autoFocus
+            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.9rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '0.75rem' }} />
+          {collabBuscando && <p style={{ color: '#B0A0C0', fontSize: '0.85rem', margin: '0 0 0.5rem' }}>Buscando...</p>}
+          {collabResultados.length > 0 && (
+            <div style={{ border: '0.5px solid #E4DCF4', borderRadius: '12px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+              {collabResultados.map(u => (
+                <div key={u._id} style={{ padding: '0.7rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '0.5px solid #F0EBF8' }}>
+                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#E0D8F8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', color: '#8070C8', fontWeight: 600, flexShrink: 0 }}>
+                    {u.nombre.charAt(0).toUpperCase()}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#2F2840', fontWeight: 400 }}>{u.nombre} {u.apellido}</p>
+                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#B0A0C0' }}>@{u.username}</p>
+                  </div>
+                  <select onChange={e => e.target.value && agregarColaborador(u, e.target.value)} defaultValue=""
+                    style={{ padding: '4px 8px', borderRadius: '8px', border: '0.5px solid #E4DCF4', fontSize: '0.8rem', color: '#2F2840', cursor: 'pointer', outline: 'none' }}>
+                    <option value="" disabled>Rol...</option>
+                    <option value="editor">Editor</option>
+                    <option value="revisor">Revisor</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button onClick={() => setAddCollabModal(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cerrar</button>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── MODAL COMPLETAR PROYECTO ── */}
+      {completarConfirm && (
+        <Modal onClose={() => setCompletarConfirm(false)}>
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 0.75rem' }}>
+            {noteEstado === 'completado' ? 'Reabrir proyecto' : 'Completar proyecto'}
+          </h2>
+          <p style={{ color: '#B0A0C0', fontSize: '0.875rem', margin: '0 0 1.5rem', fontWeight: 300 }}>
+            {noteEstado === 'completado'
+              ? '¿Quieres reabrir este proyecto y marcarlo como en progreso?'
+              : '¿Confirmas que quieres marcar este proyecto como completado?'}
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <button onClick={() => setCompletarConfirm(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cancelar</button>
+            <button onClick={completarNota} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: 'none', backgroundColor: noteEstado === 'completado' ? '#7090B8' : '#8070C8', color: '#FFFFFF', cursor: 'pointer' }}>
+              {noteEstado === 'completado' ? 'Reabrir' : 'Completar'}
             </button>
           </div>
         </Modal>

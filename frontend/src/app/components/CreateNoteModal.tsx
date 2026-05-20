@@ -11,7 +11,7 @@ interface UsuarioBusqueda {
 }
 
 interface Colaborador extends UsuarioBusqueda {
-  rol: 'admin' | 'editor' | 'revisor' | 'observador';
+  rol: 'admin' | 'editor' | 'revisor';
   esCreador?: boolean;
 }
 
@@ -19,7 +19,6 @@ const ROLES = [
   { key: 'admin' as const,      label: 'Admin',      color: '#8070C8' },
   { key: 'editor' as const,     label: 'Editor',     color: '#C070A0' },
   { key: 'revisor' as const,    label: 'Revisor',    color: '#7090B8' },
-  { key: 'observador' as const, label: 'Observador', color: '#B0A0C0' },
 ];
 
 interface Props {

@@ -26,10 +26,10 @@ export class Note {
   es_colaborativa: boolean;
 
   @Prop({
-    type: [{ usuario_id: String, username: String, nombre: String, rol: String }],
+    type: [{ usuario_id: String, username: String, nombre: String, rol: String, invitacion: String }],
     default: [],
   })
-  colaboradores: { usuario_id: string; username: string; nombre: string; rol: string }[];
+  colaboradores: { usuario_id: string; username: string; nombre: string; rol: string; invitacion: string }[];
 
   @Prop({ type: Types.ObjectId, ref: 'FlowDashboard', default: null })
   dashboard_id: Types.ObjectId | null;

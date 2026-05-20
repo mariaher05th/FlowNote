@@ -1,21 +1,23 @@
 import { useState, useEffect } from 'react';
 import { CreateNoteModal } from './CreateNoteModal';
-import { notesService, Note, Colaborador } from '../../services/notes.service';
+import { notesService, Note } from '../../services/notes.service';
+import api from '../../services/api';
 
 const statusLabel: Record<string, string> = {
   pendiente: 'Pendiente', en_progreso: 'En progreso', completado: 'Completado',
 };
 
 const rolLabel: Record<string, string> = {
-  admin: 'Administrador', editor: 'Editor', revisor: 'Revisor', observador: 'Observador',
+  admin: 'Administrador', editor: 'Editor', revisor: 'Revisor',
 };
 
 export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) {
-  const [notes, setNotes]           = useState<Note[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [search, setSearch]         = useState('');
-  const [filter, setFilter]         = useState('all');
-  const [showModal, setShowModal]   = useState(false);
+  const [notes, setNotes]               = useState<Note[]>([]);
+  const [invitaciones, setInvitaciones] = useState<Note[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [search, setSearch]             = useState('');
+  const [filter, setFilter]             = useState('all');
+  const [showModal, setShowModal]       = useState(false);
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const miUserId = String(user.id || user._id || '');
@@ -32,11 +34,25 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
   const puedeEliminar = (nota: Note) => esAutor(nota) || miRolEn(nota) === 'admin';
 
   useEffect(() => {
-    notesService.getAll()
-      .then(data => setNotes(data))
-      .catch(() => setNotes([]))
-      .finally(() => setLoading(false));
+    Promise.all([
+      notesService.getAll(),
+      api.get('/notes/invitaciones').then(r => r.data).catch(() => []),
+    ]).then(([notas, invs]) => {
+      setNotes(notas);
+      setInvitaciones(invs);
+    }).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  const responderInvitacion = async (noteId: string, respuesta: 'aceptada' | 'rechazada') => {
+    try {
+      await api.patch(`/notes/${noteId}/invitacion`, { respuesta });
+      setInvitaciones(prev => prev.filter(n => n._id !== noteId));
+      if (respuesta === 'aceptada') {
+        const notas = await notesService.getAll();
+        setNotes(notas);
+      }
+    } catch {}
+  };
 
   const handleCreada = (noteId: string) => {
     setShowModal(false);
@@ -106,6 +122,48 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
           onClose={() => setShowModal(false)}
           onCreada={handleCreada}
         />
+      )}
+
+      {/* ── Invitaciones pendientes ── */}
+      {invitaciones.length > 0 && (
+        <div style={{ marginBottom: '2rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '1rem' }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#C070A0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              Invitaciones pendientes
+            </span>
+            <span style={{ backgroundColor: '#F0D8EC', color: '#C070A0', fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: '20px' }}>
+              {invitaciones.length}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            {invitaciones.map(inv => {
+              const miColaborador = inv.colaboradores?.find(
+                (c: any) => String(c.usuario_id) === miUserId || c.username === user.username
+              );
+              const rolColors: Record<string, string> = { admin: '#8070C8', editor: '#C070A0', revisor: '#7090B8' };
+              const rol = miColaborador?.rol || 'editor';
+              return (
+                <div key={inv._id} style={{ backgroundColor: 'var(--card-bg)', border: '0.5px solid #F0D8EC', borderRadius: '14px', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: 0, fontWeight: 400, color: 'var(--card-title)', fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.titulo}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--muted-fg)', fontWeight: 300 }}>
+                      Te invitaron como{' '}
+                      <span style={{ color: rolColors[rol] || '#8070C8', fontWeight: 500 }}>{rolLabel[rol] || rol}</span>
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                    <button onClick={() => responderInvitacion(inv._id, 'aceptada')} style={{ padding: '6px 14px', borderRadius: '20px', border: 'none', backgroundColor: '#8070C8', color: '#FFFFFF', fontSize: '0.8rem', cursor: 'pointer', fontWeight: 400 }}>
+                      Aceptar
+                    </button>
+                    <button onClick={() => responderInvitacion(inv._id, 'rechazada')} style={{ padding: '6px 14px', borderRadius: '20px', border: '0.5px solid var(--card-border)', backgroundColor: 'transparent', color: 'var(--muted-fg)', fontSize: '0.8rem', cursor: 'pointer' }}>
+                      Rechazar
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Empty state */}
