@@ -563,15 +563,21 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     const x = rect ? rect.width / 2 - 120 : 100;
     const y = rect ? rect.height / 2 - 50 : 100;
     const newTask: CanvasItem = {
-      id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90,
-      content: taskTitulo.trim(), status: taskEstado,
+      id: Date.now().toString(),
+      type: 'task', x, y,
+      width: 240,
+      height: 90,
+      content: taskTitulo.trim(),
+      status: taskEstado,
       asignadoA: esColaborativa ? (taskAsignado || user.username) : undefined,
       color: '',
     };
     setItems(prev => [...prev, newTask]);
-    // También guarda en el backend como nota
-    api.post('/notes', { titulo: taskTitulo.trim(), estado: taskEstado === 'finalizada' ? 'completado' : taskEstado === 'en_proceso' ? 'en_progreso' : 'pendiente' }).catch(() => {});
-    setTaskModal(false); setTaskTitulo(''); setTaskEstado('pendiente'); setTaskAsignado('');
+
+    setTaskModal(false);
+    setTaskTitulo('');
+    setTaskEstado('pendiente');
+    setTaskAsignado('');
   };
 
   // ── Crear recordatorio ──
