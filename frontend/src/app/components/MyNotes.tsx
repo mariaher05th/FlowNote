@@ -38,7 +38,7 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
 
   const filtered = notes.filter(n => {
     const matchSearch = n.titulo.toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === 'all' || n.status === filter ||
+    const matchFilter = filter === 'all' || n.estado === filter ||
       (filter === 'pendiente' && n.estado === 'pendiente') ||
       (filter === 'en_progreso' && n.estado === 'en_progreso') ||
       (filter === 'completado' && n.estado === 'completado');
