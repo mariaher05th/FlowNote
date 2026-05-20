@@ -9,6 +9,7 @@ export interface Colaborador {
 
 export interface Note {
   _id: string;
+  autor_id?: string;
   titulo: string;
   contenido: string;
   estado: string;

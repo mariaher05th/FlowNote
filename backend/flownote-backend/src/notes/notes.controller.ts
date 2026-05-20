@@ -16,6 +16,10 @@ export class NotesController {
     private readonly exportService: ExportService,
   ) {}
 
+  private ctx(req: { user: { sub: string; username?: string } }) {
+    return { userId: req.user.sub, username: req.user.username };
+  }
+
   @Post()
   crear(@Body() dto: CreateNoteDto, @Request() req) {
     return this.notesService.crear(dto, req.user.sub);
@@ -23,7 +27,8 @@ export class NotesController {
 
   @Get()
   obtenerMias(@Request() req) {
-    return this.notesService.obtenerMias(req.user.sub);
+    const { userId, username } = this.ctx(req);
+    return this.notesService.obtenerMias(userId, username);
   }
 
   @Get('buscar')
@@ -48,33 +53,39 @@ export class NotesController {
 
   @Get(':id')
   obtenerUna(@Param('id') id: string, @Request() req) {
-    return this.notesService.obtenerUna(id, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    return this.notesService.obtenerUna(id, userId, username);
   }
 
   @Put(':id')
   actualizar(@Param('id') id: string, @Body() dto: UpdateNoteDto, @Request() req) {
-    return this.notesService.actualizar(id, dto, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    return this.notesService.actualizar(id, dto, userId, username);
   }
 
   @Delete(':id')
   eliminar(@Param('id') id: string, @Request() req) {
-    return this.notesService.eliminar(id, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    return this.notesService.eliminar(id, userId, username);
   }
 
   @Get(':id/vinculos')
   sugerirVinculos(@Param('id') id: string, @Request() req) {
-    return this.notesService.sugerirVinculos(id, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    return this.notesService.sugerirVinculos(id, userId, username);
   }
 
   @Get(':id/export/pdf')
   async exportarPDF(@Param('id') id: string, @Request() req, @Res() res: Response) {
-    const nota = await this.notesService.obtenerUna(id, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    const nota = await this.notesService.obtenerUna(id, userId, username);
     this.exportService.exportarPDF(nota.titulo, nota.contenido, res);
   }
 
   @Get(':id/export/markdown')
   async exportarMarkdown(@Param('id') id: string, @Request() req, @Res() res: Response) {
-    const nota = await this.notesService.obtenerUna(id, req.user.sub);
+    const { userId, username } = this.ctx(req);
+    const nota = await this.notesService.obtenerUna(id, userId, username);
     this.exportService.exportarMarkdown(nota.titulo, nota.contenido, res);
   }
 }

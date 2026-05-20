@@ -31,9 +31,12 @@ export class NotesService {
     }
 
     const nota = await this.noteModel.create({
-      ...dto,
       titulo,
       contenido,
+      estado: dto.estado,
+      etiquetas: dto.etiquetas ?? [],
+      es_colaborativa: dto.es_colaborativa ?? false,
+      colaboradores: dto.es_colaborativa ? (dto.colaboradores ?? []) : [],
       autor_id: new Types.ObjectId(userId),
       espacio_id: dto.espacio_id ? new Types.ObjectId(dto.espacio_id) : null,
     });
@@ -44,14 +47,10 @@ export class NotesService {
     return nota;
   }
 
-  async obtenerMias(userId: string): Promise<NoteDocument[]> {
+  async obtenerMias(userId: string, username?: string): Promise<NoteDocument[]> {
     const espacioIds = await this.accessService.idsEspaciosDelUsuario(userId);
-    return this.noteModel.find({
-      $or: [
-        { autor_id: new Types.ObjectId(userId) },
-        { espacio_id: { $in: espacioIds } },
-      ],
-    }).sort({ updatedAt: -1 });
+    const filtro = this.accessService.filtroNotasAccesibles(userId, espacioIds, username);
+    return this.noteModel.find(filtro).sort({ updatedAt: -1 });
   }
 
   async obtenerPorEspacio(espacioId: string, userId: string): Promise<NoteDocument[]> {
@@ -63,19 +62,19 @@ export class NotesService {
       .sort({ updatedAt: -1 });
   }
 
-  async obtenerUna(id: string, userId: string): Promise<NoteDocument> {
+  async obtenerUna(id: string, userId: string, username?: string): Promise<NoteDocument> {
     const nota = await this.noteModel.findById(id);
     if (!nota) throw new NotFoundException('Nota no encontrada');
-    if (!(await this.accessService.puedeLeerNota(nota, userId))) {
+    if (!(await this.accessService.puedeLeerNota(nota, userId, username))) {
       throw new ForbiddenException('No tienes acceso a esta nota');
     }
     return nota;
   }
 
-  async actualizar(id: string, dto: UpdateNoteDto, userId: string): Promise<NoteDocument> {
+  async actualizar(id: string, dto: UpdateNoteDto, userId: string, username?: string): Promise<NoteDocument> {
     const nota = await this.noteModel.findById(id);
     if (!nota) throw new NotFoundException('Nota no encontrada');
-    if (!(await this.accessService.puedeEditarNota(nota, userId))) {
+    if (!(await this.accessService.puedeEditarNota(nota, userId, username))) {
       throw new ForbiddenException('No puedes editar esta nota');
     }
 
@@ -94,10 +93,10 @@ if (dto.es_colaborativa && !actualizada.dashboard_id) {
 return actualizada;
   }
 
-  async eliminar(id: string, userId: string): Promise<{ mensaje: string }> {
+  async eliminar(id: string, userId: string, username?: string): Promise<{ mensaje: string }> {
     const nota = await this.noteModel.findById(id);
     if (!nota) throw new NotFoundException('Nota no encontrada');
-    if (!(await this.accessService.puedeEliminarNota(nota, userId))) {
+    if (!(await this.accessService.puedeEliminarNota(nota, userId, username))) {
       throw new ForbiddenException('No puedes eliminar esta nota');
     }
     await this.noteModel.findByIdAndDelete(id);
@@ -108,20 +107,17 @@ return actualizada;
     if (!query || query.trim().length === 0) return [];
     const q = query.trim().substring(0, 200);
     const espacioIds = await this.accessService.idsEspaciosDelUsuario(userId);
+    const acceso = this.accessService.filtroNotasAccesibles(userId, espacioIds);
 
     return this.noteModel.find({
-      $text: { $search: q },
-      $or: [
-        { autor_id: new Types.ObjectId(userId) },
-        { espacio_id: { $in: espacioIds } },
-      ],
+      $and: [{ $text: { $search: q } }, acceso],
     }, { score: { $meta: 'textScore' } })
       .sort({ score: { $meta: 'textScore' } })
       .limit(20);
   }
 
-  async sugerirVinculos(id: string, userId: string): Promise<NoteDocument[]> {
-    const nota = await this.obtenerUna(id, userId);
+  async sugerirVinculos(id: string, userId: string, username?: string): Promise<NoteDocument[]> {
+    const nota = await this.obtenerUna(id, userId, username);
     if (!nota.contenido) return [];
 
     const palabras = nota.contenido
@@ -134,12 +130,11 @@ return actualizada;
 
     const espacioIds = await this.accessService.idsEspaciosDelUsuario(userId);
 
+    const acceso = this.accessService.filtroNotasAccesibles(userId, espacioIds);
+
     return this.noteModel.find({
       _id: { $ne: nota._id },
-      $or: [
-        { autor_id: new Types.ObjectId(userId) },
-        { espacio_id: { $in: espacioIds } },
-      ],
+      ...acceso,
       $and: [{
         $or: palabras.map(p => ({
           $or: [
@@ -155,10 +150,7 @@ return actualizada;
     const espacioIds = await this.accessService.idsEspaciosDelUsuario(userId);
     return this.noteModel.find({
       estado,
-      $or: [
-        { autor_id: new Types.ObjectId(userId) },
-        { espacio_id: { $in: espacioIds } },
-      ],
+      ...this.accessService.filtroNotasAccesibles(userId, espacioIds),
     }).sort({ updatedAt: -1 });
   }
 
@@ -171,10 +163,7 @@ return actualizada;
       filtro.espacio_id = new Types.ObjectId(espacioId);
     } else {
       const espacioIds = await this.accessService.idsEspaciosDelUsuario(userId);
-      filtro.$or = [
-        { autor_id: new Types.ObjectId(userId) },
-        { espacio_id: { $in: espacioIds } },
-      ];
+      Object.assign(filtro, this.accessService.filtroNotasAccesibles(userId, espacioIds));
     }
 
     const notas = await this.noteModel.find(filtro).sort({ updatedAt: -1 });

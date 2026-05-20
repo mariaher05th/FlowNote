@@ -1,10 +1,10 @@
 import {
-  IsString, IsOptional, IsObject, IsEnum, IsNumber, IsIn,
+  IsString, IsOptional, IsObject, IsNumber, IsIn, Allow,
 } from 'class-validator';
 import { LOCK_RESOURCE_TYPES, RoomType } from '../collaboration.types';
 
 export class RoomBodyDto {
-  @IsEnum(['nota', 'espacio'])
+  @IsIn(['nota', 'espacio'])
   roomType: RoomType;
 
   @IsString()
@@ -24,7 +24,8 @@ export class NoteUpdateDto extends RoomBodyDto {
   field: string;
 
   @IsOptional()
-  payload: unknown;
+  @Allow()
+  payload?: Record<string, unknown>;
 }
 
 export class NoteCursorDto extends RoomBodyDto {
@@ -52,6 +53,7 @@ export class DrawingUpdateDto extends RoomBodyDto {
   @IsIn(['full', 'stroke', 'clear'])
   mode: 'full' | 'stroke' | 'clear';
 
+  @Allow()
   @IsObject()
   payload: Record<string, unknown>;
 }

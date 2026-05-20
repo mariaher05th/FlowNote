@@ -83,44 +83,81 @@ export class CollaborationGateway
   }
 
   @SubscribeMessage('join_room')
-  async joinRoom(@ConnectedSocket() client: Socket, @MessageBody() body: RoomBodyDto) {
-    const user = this.roomService.getUser(client);
-    const room = this.roomService.roomKey(body);
+  async joinRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomType?: string; roomId?: string },
+  ) {
+    let result: { event: string; data?: Record<string, unknown> };
 
-    if (!(await this.roomService.puedeEntrar(body, user.sub))) {
-      return {
-        event: COLLABORATION_EVENTS.join_denied,
-        data: { room, message: 'Sin acceso a esta sala' },
+    try {
+      const roomType = body?.roomType;
+      const roomId = body?.roomId ? String(body.roomId) : '';
+      if (roomType !== 'nota' && roomType !== 'espacio') {
+        result = { event: 'invalid_body', data: { message: 'roomType debe ser nota o espacio' } };
+        client.emit(COLLABORATION_EVENTS.join_result, result);
+        return result;
+      }
+      if (!roomId) {
+        result = { event: 'invalid_body', data: { message: 'roomId es requerido' } };
+        client.emit(COLLABORATION_EVENTS.join_result, result);
+        return result;
+      }
+
+      if (!client.data.user) {
+        client.data.user = this.autenticar(client);
+      }
+
+      const user = this.roomService.getUser(client);
+      const ref: RoomRef = { roomType, roomId };
+      const room = this.roomService.roomKey(ref);
+
+      if (!(await this.roomService.puedeEntrar(ref, user.sub, user.username))) {
+        result = {
+          event: COLLABORATION_EVENTS.join_denied,
+          data: { room, message: 'Sin acceso a esta sala' },
+        };
+        client.emit(COLLABORATION_EVENTS.join_result, result);
+        return result;
+      }
+
+      await client.join(room);
+      const locks = await this.lockService.listByRoom(room);
+      const presencia = await this.roomService.presenciaEnSala(this.server, room);
+
+      client.to(room).emit(COLLABORATION_EVENTS.presence_joined, {
+        userId: user.sub,
+        nombre: user.nombre,
+        socketId: client.id,
+      });
+
+      result = {
+        event: COLLABORATION_EVENTS.joined,
+        data: {
+          room,
+          locks: locks.map(l => this.mapLock(l)),
+          presencia,
+          lockTtlMs: this.lockService.getTtlMs(),
+          capabilities: {
+            note: ['note_title', 'note_content', 'note_metadata'],
+            drawing: ['drawing_canvas', 'drawing_stroke'],
+            comments: ['comment', 'comment_anchor'],
+            kanban: ['note_metadata'],
+            flow: ['board', 'flow_node', 'flow_edge'],
+            widgets: ['widget'],
+          },
+        },
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error al unirse a la sala';
+      this.logger.error(`join_room error: ${message}`, err instanceof Error ? err.stack : undefined);
+      result = {
+        event: err instanceof UnauthorizedException ? 'auth_required' : 'error',
+        data: { message },
       };
     }
 
-    await client.join(room);
-    const locks = await this.lockService.listByRoom(room);
-    const presencia = await this.roomService.presenciaEnSala(this.server, room);
-
-    client.to(room).emit(COLLABORATION_EVENTS.presence_joined, {
-      userId: user.sub,
-      nombre: user.nombre,
-      socketId: client.id,
-    });
-
-    return {
-      event: COLLABORATION_EVENTS.joined,
-      data: {
-        room,
-        locks: locks.map(l => this.mapLock(l)),
-        presencia,
-        lockTtlMs: this.lockService.getTtlMs(),
-        capabilities: {
-          note: ['note_title', 'note_content', 'note_metadata'],
-          drawing: ['drawing_canvas', 'drawing_stroke'],
-          comments: ['comment', 'comment_anchor'],
-          kanban: ['note_metadata'],
-          flow: ['board', 'flow_node', 'flow_edge'],
-          widgets: ['widget'],
-        },
-      },
-    };
+    client.emit(COLLABORATION_EVENTS.join_result, result);
+    return result;
   }
 
   @SubscribeMessage('leave_room')
@@ -151,17 +188,26 @@ export class CollaborationGateway
   }
 
   @SubscribeMessage('lock_acquire')
-  async lockAcquire(@ConnectedSocket() client: Socket, @MessageBody() body: LockBodyDto) {
+  async lockAcquire(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomType?: string; roomId?: string; resourceType?: string; resourceId?: string },
+  ) {
     return this.handleLock(client, body, 'acquire');
   }
 
   @SubscribeMessage('lock_renew')
-  async lockRenew(@ConnectedSocket() client: Socket, @MessageBody() body: LockBodyDto) {
+  async lockRenew(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomType?: string; roomId?: string; resourceType?: string; resourceId?: string },
+  ) {
     return this.handleLock(client, body, 'renew');
   }
 
   @SubscribeMessage('lock_release')
-  async lockRelease(@ConnectedSocket() client: Socket, @MessageBody() body: LockBodyDto) {
+  async lockRelease(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomType?: string; roomId?: string; resourceType?: string; resourceId?: string },
+  ) {
     return this.handleLock(client, body, 'release');
   }
 
@@ -170,10 +216,13 @@ export class CollaborationGateway
   async noteUpdate(@ConnectedSocket() client: Socket, @MessageBody() body: NoteUpdateDto) {
     const user = this.roomService.getUser(client);
     const room = this.roomService.roomKey(body);
-    if (!this.roomService.assertInRoom(client, room)) return;
+    if (!this.roomService.assertInRoom(client, room)) {
+      this.logger.warn(`note_update ignorado: cliente no está en sala ${room}`);
+      return { event: 'not_in_room', data: { room } };
+    }
 
-    const notaId = body.roomType === 'nota' ? body.roomId : (body.payload as any)?.notaId;
-    if (notaId && !(await this.roomService.puedeEditarNota(notaId, user.sub))) {
+    const notaId = body.roomType === 'nota' ? body.roomId : (body.payload as Record<string, unknown>)?.notaId as string;
+    if (notaId && !(await this.roomService.puedeEditarNota(notaId, user.sub, user.username))) {
       return { event: 'edit_denied', data: { message: 'Sin permiso de edición' } };
     }
 
@@ -184,6 +233,7 @@ export class CollaborationGateway
       COLLABORATION_EVENTS.note_updated,
       this.roomService.envelope(user, { field: body.field, value: body.payload }),
     );
+    return { event: 'note_update_ack', data: { ok: true } };
   }
 
   /** Cursor / selección del editor de nota */
@@ -213,7 +263,7 @@ export class CollaborationGateway
     const room = this.roomService.roomKey(body);
     if (!this.roomService.assertInRoom(client, room)) return;
 
-    if (!(await this.roomService.puedeEditarNota(body.notaId, user.sub))) {
+    if (!(await this.roomService.puedeEditarNota(body.notaId, user.sub, user.username))) {
       return { event: 'edit_denied', data: { message: 'Sin permiso de edición' } };
     }
 
@@ -228,20 +278,38 @@ export class CollaborationGateway
 
   /** Canvas / dibujo: trazo completo, un trazo o limpiar */
   @SubscribeMessage('drawing_update')
-  async drawingUpdate(@ConnectedSocket() client: Socket, @MessageBody() body: DrawingUpdateDto) {
-    const user = this.roomService.getUser(client);
-    const room = this.roomService.roomKey(body);
-    if (!this.roomService.assertInRoom(client, room)) return;
+  async drawingUpdate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      roomType?: string;
+      roomId?: string;
+      mode?: string;
+      payload?: Record<string, unknown>;
+    },
+  ) {
+    const roomType = body?.roomType;
+    const roomId = body?.roomId ? String(body.roomId) : '';
+    const mode = body?.mode ?? 'stroke';
+    if ((roomType !== 'nota' && roomType !== 'espacio') || !roomId) {
+      return { event: 'invalid_body', data: { message: 'roomType/roomId inválidos' } };
+    }
 
-    const notaId = body.roomType === 'nota' ? body.roomId : null;
-    if (notaId && !(await this.roomService.puedeEditarNota(notaId, user.sub))) {
+    const user = this.roomService.getUser(client);
+    const ref: RoomRef = { roomType, roomId };
+    const room = this.roomService.roomKey(ref);
+    if (!this.roomService.assertInRoom(client, room)) {
+      return { event: 'not_in_room', data: { room } };
+    }
+
+    const notaId = roomType === 'nota' ? roomId : null;
+    if (notaId && !(await this.roomService.puedeEditarNota(notaId, user.sub, user.username))) {
       return { event: 'edit_denied', data: { message: 'Sin permiso de edición' } };
     }
 
     const event =
-      body.mode === 'clear'
+      mode === 'clear'
         ? COLLABORATION_EVENTS.drawing_cleared
-        : body.mode === 'stroke'
+        : mode === 'stroke' || mode === 'segment'
           ? COLLABORATION_EVENTS.drawing_stroke_added
           : COLLABORATION_EVENTS.drawing_updated;
 
@@ -250,8 +318,9 @@ export class CollaborationGateway
       client,
       room,
       event,
-      this.roomService.envelope(user, { mode: body.mode, ...body.payload }),
+      this.roomService.envelope(user, { mode, ...(body.payload ?? {}) }),
     );
+    return { event: 'drawing_update_ack', data: { ok: true } };
   }
 
   @SubscribeMessage('comment_add')
@@ -334,89 +403,95 @@ export class CollaborationGateway
 
   private async handleLock(
     client: Socket,
-    body: LockBodyDto,
+    body: { roomType?: string; roomId?: string; resourceType?: string; resourceId?: string },
     action: 'acquire' | 'renew' | 'release',
   ) {
-    const user = this.roomService.getUser(client);
-    const room = this.roomService.roomKey(body);
-    const holder = { userId: user.sub, userName: user.nombre, socketId: client.id };
+    let result: { event: string; data?: Record<string, unknown> };
 
-    if (!this.roomService.assertInRoom(client, room)) {
-      return { event: 'lock_error', data: { message: 'Debes unirte a la sala primero' } };
-    }
+    try {
+      const roomType = body?.roomType;
+      const roomId = body?.roomId ? String(body.roomId) : '';
+      const resourceType = body?.resourceType as LockResourceType | undefined;
+      const resourceId = body?.resourceId ? String(body.resourceId) : '';
 
-    if (action === 'acquire') {
-      const result = await this.lockService.acquire(
-        room,
-        body.resourceType as LockResourceType,
-        body.resourceId,
-        holder,
-      );
-      if (!result.acquired) {
-        return {
-          event: COLLABORATION_EVENTS.lock_denied,
-          data: {
-            resourceType: body.resourceType,
-            resourceId: body.resourceId,
-            conflict: result.conflict,
-          },
-        };
+      if ((roomType !== 'nota' && roomType !== 'espacio') || !roomId || !resourceType || !resourceId) {
+        result = { event: 'invalid_body', data: { message: 'Datos de lock incompletos' } };
+        client.emit(COLLABORATION_EVENTS.lock_result, result);
+        return result;
       }
-      client.to(room).emit(COLLABORATION_EVENTS.lock_acquired, {
-        resourceType: body.resourceType,
-        resourceId: body.resourceId,
-        holder: { userId: user.sub, nombre: user.nombre, socketId: client.id },
-        expiresAt: result.lock!.expires_at,
-      });
-      return {
-        event: COLLABORATION_EVENTS.lock_granted,
-        data: {
-          resourceType: body.resourceType,
-          resourceId: body.resourceId,
-          expiresAt: result.lock!.expires_at,
-          ttlMs: this.lockService.getTtlMs(),
-        },
-      };
-    }
 
-    if (action === 'renew') {
-      const result = await this.lockService.renew(
-        room,
-        body.resourceType as LockResourceType,
-        body.resourceId,
-        holder,
-      );
-      if (!result.renewed) {
-        return {
-          event: COLLABORATION_EVENTS.lock_expired,
-          data: { resourceType: body.resourceType, resourceId: body.resourceId },
-        };
+      if (!client.data.user) {
+        client.data.user = this.autenticar(client);
       }
-      client.to(room).emit(COLLABORATION_EVENTS.lock_renewed, {
-        resourceType: body.resourceType,
-        resourceId: body.resourceId,
-        expiresAt: result.lock!.expires_at,
-      });
-      return {
-        event: 'lock_renewed_ack',
-        data: { expiresAt: result.lock!.expires_at },
-      };
+
+      const user = this.roomService.getUser(client);
+      const ref: RoomRef = { roomType, roomId };
+      const room = this.roomService.roomKey(ref);
+      const holder = { userId: user.sub, userName: user.nombre, socketId: client.id };
+
+      if (!this.roomService.assertInRoom(client, room)) {
+        result = { event: 'lock_error', data: { message: 'Debes unirte a la sala primero' } };
+        client.emit(COLLABORATION_EVENTS.lock_result, result);
+        return result;
+      }
+
+      if (action === 'acquire') {
+        const acquired = await this.lockService.acquire(room, resourceType, resourceId, holder);
+        if (!acquired.acquired) {
+          result = {
+            event: COLLABORATION_EVENTS.lock_denied,
+            data: {
+              resourceType,
+              resourceId,
+              conflict: acquired.conflict,
+            },
+          };
+        } else {
+          const lockView = this.mapLock(acquired.lock!);
+          client.to(room).emit(COLLABORATION_EVENTS.lock_acquired, lockView);
+          await this.emitLocksActivos(room);
+          result = {
+            event: COLLABORATION_EVENTS.lock_granted,
+            data: {
+              resourceType,
+              resourceId,
+              lock: lockView,
+              ttlMs: this.lockService.getTtlMs(),
+            },
+          };
+        }
+      } else if (action === 'renew') {
+        const renewed = await this.lockService.renew(room, resourceType, resourceId, holder);
+        if (!renewed.renewed) {
+          result = {
+            event: COLLABORATION_EVENTS.lock_expired,
+            data: { resourceType, resourceId },
+          };
+        } else {
+          const lockView = this.mapLock(renewed.lock!);
+          client.to(room).emit(COLLABORATION_EVENTS.lock_renewed, lockView);
+          result = { event: 'lock_renewed_ack', data: { lock: lockView } };
+        }
+      } else {
+        const released = await this.lockService.release(room, resourceType, resourceId, holder);
+        if (released) {
+          client.to(room).emit(COLLABORATION_EVENTS.lock_released, {
+            resourceType,
+            resourceId,
+            releasedBy: user.sub,
+          });
+          await this.emitLocksActivos(room);
+        }
+        result = { event: 'lock_release_ack', data: { released, resourceType, resourceId } };
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error de lock';
+      this.logger.warn(`handleLock ${action}: ${message}`);
+      result = { event: 'error', data: { message } };
     }
 
-    const released = await this.lockService.release(
-      room,
-      body.resourceType as LockResourceType,
-      body.resourceId,
-      holder,
-    );
-    if (released) {
-      client.to(room).emit(COLLABORATION_EVENTS.lock_released, {
-        resourceType: body.resourceType,
-        resourceId: body.resourceId,
-        releasedBy: user.sub,
-      });
-    }
-    return { event: 'lock_release_ack', data: { released } };
+    client.emit(COLLABORATION_EVENTS.lock_result, result);
+    return result;
   }
 
   private autenticar(client: Socket): SocketUser {
@@ -426,7 +501,18 @@ export class CollaborationGateway
       || (client.handshake.headers?.authorization as string)?.replace('Bearer ', '');
 
     if (!token) throw new UnauthorizedException();
-    return this.jwtService.verify<SocketUser>(token);
+    const payload = this.jwtService.verify<{
+      sub: string;
+      email: string;
+      nombre: string;
+      username?: string;
+    }>(token);
+    return {
+      sub: String(payload.sub),
+      email: payload.email,
+      nombre: payload.nombre,
+      username: payload.username,
+    };
   }
 
   private async emitLocksActivos(room: string) {

@@ -20,11 +20,13 @@ services:
     build:
       context: ./backend/flownote-backend/
       dockerfile: Dockerfile
+    env_file:
+      - ./backend/flownote-backend/.env
     depends_on:
       db:
         condition: service_healthy
     environment:
-      MONGODB_URI: mongodb://flownote_db:27017/flownote
+      MONGODB_URI: mongodb://db:27017/flownote
       PORT: 3000
     ports:
       - "3000:3000"

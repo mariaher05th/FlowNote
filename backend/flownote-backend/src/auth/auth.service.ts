@@ -59,15 +59,36 @@ export class AuthService {
     return this.userModel.findById(userId).select('-contrasena_hash');
   }
 
-  async buscarUsuarios(q: string, excludeUserId: string) {
-    if (!q || q.length < 2) return [];
-    return this.userModel.find({
-      _id: { $ne: new Types.ObjectId(excludeUserId) },
+  async buscarUsuarios(
+    q: string,
+    excludeUserId: string,
+  ): Promise<{ _id: string; nombre: string; apellido: string; username: string }[]> {
+    const term = q.trim().replace(/^@+/, '');
+    if (!term) return [];
+
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const filtro: Record<string, unknown> = {
       $or: [
-        { username: { $regex: q, $options: 'i' } },
-        { nombre:   { $regex: q, $options: 'i' } },
+        { username: { $regex: escaped, $options: 'i' } },
+        { nombre: { $regex: escaped, $options: 'i' } },
+        { apellido: { $regex: escaped, $options: 'i' } },
       ],
-    }).select('_id nombre apellido username').limit(8);
+    };
+
+    if (excludeUserId && Types.ObjectId.isValid(excludeUserId)) {
+      filtro._id = { $ne: new Types.ObjectId(excludeUserId) };
+    }
+
+    const usuarios = await this.userModel
+      .find(filtro)
+      .select('_id nombre apellido username')
+      .limit(8)
+      .lean();
+
+    return usuarios.map(u => ({
+      ...u,
+      _id: u._id.toString(),
+    }));
   }
 
   async actualizarTema(userId: string, dto: UpdateThemeDto) {
@@ -85,7 +106,7 @@ export class AuthService {
 
   private mapUsuario(usuario: UserDocument) {
     return {
-      id: usuario._id,
+      id: usuario._id.toString(),
       nombre: usuario.nombre,
       apellido: usuario.apellido,
       username: usuario.username,
@@ -96,9 +117,10 @@ export class AuthService {
 
   private generarToken(usuario: UserDocument) {
     return this.jwtService.sign({
-      sub: usuario._id,
+      sub: usuario._id.toString(),
       email: usuario.email,
       nombre: usuario.nombre,
+      username: usuario.username,
     });
   }
 }

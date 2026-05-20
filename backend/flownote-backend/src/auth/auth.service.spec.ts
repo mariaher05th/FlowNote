@@ -93,6 +93,27 @@ describe('AuthService', () => {
     });
   });
 
+  describe('buscarUsuarios', () => {
+    it('elimina @ del término y excluye al usuario actual', async () => {
+      userModel.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            lean: jest.fn().mockResolvedValue([
+              { _id: { toString: () => 'u2' }, nombre: 'Bob', apellido: 'López', username: 'bob' },
+            ]),
+          }),
+        }),
+      });
+
+      const result = await service.buscarUsuarios('@bob', usuarioMock._id.toString());
+
+      expect(userModel.find).toHaveBeenCalled();
+      const filtro = userModel.find.mock.calls[0][0];
+      expect(filtro.$or[0].username.$regex).toBe('bob');
+      expect(result[0].username).toBe('bob');
+    });
+  });
+
   describe('actualizarTema', () => {
     it('actualiza el tema con valor válido', async () => {
       userModel.findByIdAndUpdate.mockReturnValue({

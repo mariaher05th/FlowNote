@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import api from '../../services/api';
+import { useCollaboration } from '../../hooks/useCollaboration';
+import { CollaborationBar } from './CollaborationBar';
 import { speechService } from '../../services/speech.service';
 
 // ── Tipos ──────────────────────────────────────────────
@@ -24,6 +26,9 @@ interface Colaborador { usuario_id: string; username: string; nombre: string; ro
 
 const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 const penColors  = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
+/** Espacio lógico del tablero (coordenadas normalizadas para colaboración) */
+const BOARD_W = 2000;
+const BOARD_H = 2000;
 
 // ── Separador de toolbar ────────────────────────────────
 const Sep = () => (
@@ -71,7 +76,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const canvasRef     = useRef<HTMLCanvasElement>(null);
   const containerRef  = useRef<HTMLDivElement>(null);
   const saveTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const collabTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isLoaded      = useRef(false);
+  const remoteApplying = useRef(false);
   const itemsRef      = useRef<CanvasItem[]>([]);
   const strokesRef    = useRef<Stroke[]>([]);
   const currentStroke = useRef<Stroke | null>(null);
@@ -88,6 +95,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [esColaborativa, setEsColaborativa] = useState(false);
   const [colaboradores,  setColaboradores]  = useState<Colaborador[]>([]);
   const [miRol,          setMiRol]          = useState<string>('admin');
+  const [esInvitado,     setEsInvitado]     = useState(false);
 
   // Estado del tablero
   const [tool,       setTool]       = useState<Tool>('select');
@@ -110,6 +118,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [speechText, setSpeechText] = useState('');
   const [speechError, setSpeechError] = useState('');
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [lockMsg,    setLockMsg]    = useState<string | null>(null);
+  const lockRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const draggingItemId = useRef<string | null>(null);
 
   // Modales
   const [taskModal,     setTaskModal]     = useState(false);
@@ -126,8 +137,12 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [exportPos,   setExportPos]     = useState({ top: 0, left: 0 });
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const miUserId = String(user.id || user._id || '');
+  const puedeEditar = ['admin', 'editor'].includes(miRol);
+  const rolLabel: Record<string, string> = {
+    admin: 'Administrador', editor: 'Editor', revisor: 'Revisor', observador: 'Observador',
+  };
 
-  // ── Helpers de canvas ──
   const replayStrokes = (strokes: Stroke[]) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -148,6 +163,78 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     ctx.globalCompositeOperation = 'source-over';
   };
 
+  const applyRemoteBoard = useCallback((value: unknown) => {
+    const data = value as { items?: CanvasItem[]; strokes?: Stroke[] };
+    remoteApplying.current = true;
+    if (Array.isArray(data?.items)) {
+      itemsRef.current = data.items;
+      setItems(data.items);
+    }
+    if (Array.isArray(data?.strokes)) {
+      strokesRef.current = data.strokes;
+      replayStrokes(data.strokes);
+      setCanvasVer(v => v + 1);
+    }
+    setTimeout(() => { remoteApplying.current = false; }, 120);
+  }, []);
+
+  const handleRemoteDrawing = useCallback((mode: string, payload: Record<string, unknown>) => {
+    remoteApplying.current = true;
+    if (mode === 'clear') {
+      strokesRef.current = [];
+      const canvas = canvasRef.current;
+      canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    } else if (mode === 'stroke') {
+      const raw = (payload.trazo ?? payload) as {
+        puntos?: { x: number; y: number }[];
+        points?: { x: number; y: number }[];
+        color?: string;
+        grosor?: number;
+        size?: number;
+        eraser?: boolean;
+      };
+      const trazo: Stroke = {
+        color: raw.color ?? '#8070C8',
+        size: raw.grosor ?? raw.size ?? 3,
+        eraser: raw.eraser ?? false,
+        points: raw.points ?? raw.puntos?.map(p => ({ x: p.x, y: p.y })) ?? [],
+      };
+      if (trazo.points.length > 1) {
+        strokesRef.current = [...strokesRef.current, trazo];
+        replayStrokes(strokesRef.current);
+        setCanvasVer(v => v + 1);
+      }
+    } else if (mode === 'full' && Array.isArray(payload.trazos)) {
+      strokesRef.current = payload.trazos as Stroke[];
+      replayStrokes(strokesRef.current);
+      setCanvasVer(v => v + 1);
+    }
+    setTimeout(() => { remoteApplying.current = false; }, 120);
+  }, []);
+
+  const {
+    connected: collabConnected,
+    roomReady: collabRoomReady,
+    joinError: collabJoinError,
+    presencia: collabPresencia,
+    locks: collabLocks,
+    getLock,
+    iHaveLock,
+    isLockedByOther,
+    broadcastBoard,
+    broadcastStroke,
+    acquireResourceLock,
+    releaseResourceLock,
+  } = useCollaboration({
+    roomType: 'nota',
+    roomId: noteId,
+    enabled: !!noteId,
+    onRemoteNoteUpdate: (field, value) => {
+      if (field === 'contenido') applyRemoteBoard(value);
+    },
+    onRemoteDrawing: (mode, payload) => handleRemoteDrawing(mode, payload),
+  });
+
   const buildContenido = (currentItems: CanvasItem[]) =>
     JSON.stringify({ items: currentItems, strokes: strokesRef.current });
 
@@ -156,7 +243,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     isLoaded.current = false;
     strokesRef.current = [];
     setItems([]); setNoteTitle('');
-    setEsColaborativa(false); setColaboradores([]); setMiRol('admin');
+    setEsColaborativa(false); setColaboradores([]); setMiRol('admin'); setEsInvitado(false);
     const canvas = canvasRef.current;
     if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     if (!noteId) return;
@@ -166,8 +253,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       setEsColaborativa(!!note.es_colaborativa);
       const cols: Colaborador[] = note.colaboradores || [];
       setColaboradores(cols);
-      const yo = cols.find((c: Colaborador) => c.username === user.username);
-      setMiRol(yo ? yo.rol : 'admin');
+      const autorId = String(note.autor_id || '');
+      const esAutor = autorId === miUserId;
+      const yo = cols.find(
+        (c: Colaborador) => String(c.usuario_id) === miUserId || c.username === user.username,
+      );
+      setMiRol(yo?.rol ?? (esAutor ? 'admin' : 'observador'));
+      setEsInvitado(!esAutor && !!yo);
       try {
         const data = JSON.parse(note.contenido || '{}');
         setItems(Array.isArray(data?.items) ? data.items : []);
@@ -183,12 +275,25 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   useEffect(() => { itemsRef.current = items; }, [items]);
 
   useEffect(() => {
-    if (!noteId || !isLoaded.current) return;
+    if (!noteId || !isLoaded.current || remoteApplying.current || !puedeEditar) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
     }, 500);
-  }, [items, noteId, canvasVer]);
+    if (!collabRoomReady) return;
+    if (collabTimer.current) clearTimeout(collabTimer.current);
+    collabTimer.current = setTimeout(() => {
+      broadcastBoard(itemsRef.current, strokesRef.current);
+    }, 150);
+  }, [items, noteId, broadcastBoard, puedeEditar, collabRoomReady]);
+
+  useEffect(() => {
+    if (!noteId || !isLoaded.current || remoteApplying.current || !puedeEditar || !collabRoomReady) return;
+    if (collabTimer.current) clearTimeout(collabTimer.current);
+    collabTimer.current = setTimeout(() => {
+      broadcastBoard(itemsRef.current, strokesRef.current);
+    }, 200);
+  }, [canvasVer, noteId, broadcastBoard, puedeEditar, collabRoomReady]);
 
   useEffect(() => {
     return () => {
@@ -210,7 +315,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   // ── Guardar ──
   const guardarAhora = async () => {
-    if (!noteId) return;
+    if (!noteId || !puedeEditar) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setGuardando(true);
     try {
@@ -220,14 +325,70 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     } finally { setGuardando(false); }
   };
 
+  const canvasLockId = noteId ?? 'canvas';
+  const drawingLock = noteId ? getLock('drawing_canvas', canvasLockId) : undefined;
+  const drawingBlocked = noteId
+    ? isLockedByOther('drawing_canvas', canvasLockId)
+    : false;
+
+  const clearLockRenew = () => {
+    if (lockRenewRef.current) {
+      clearInterval(lockRenewRef.current);
+      lockRenewRef.current = null;
+    }
+  };
+
+  const startLockRenew = (resourceType: 'drawing_canvas' | 'board', resourceId: string) => {
+    clearLockRenew();
+    lockRenewRef.current = setInterval(() => {
+      if (noteId && iHaveLock(resourceType, resourceId)) {
+        acquireResourceLock(resourceType, resourceId).catch(() => {});
+      }
+    }, 12_000);
+  };
+
+  useEffect(() => () => {
+    clearLockRenew();
+    if (draggingItemId.current && noteId) {
+      releaseResourceLock('board', draggingItemId.current);
+    }
+    if (noteId) {
+      releaseResourceLock('drawing_canvas', canvasLockId);
+    }
+  }, [noteId, releaseResourceLock, canvasLockId]);
+
   // ── Dibujo ──
   const getCanvasPos = (e: React.MouseEvent, canvas: HTMLCanvasElement) => {
     const rect = canvas.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    if (rect.width <= 0 || rect.height <= 0) return { x: 0, y: 0 };
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * BOARD_W,
+      y: ((e.clientY - rect.top) / rect.height) * BOARD_H,
+    };
   };
 
-  const startDraw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const startDraw = async (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!puedeEditar) return;
     if (tool !== 'pen' && tool !== 'eraser') return;
+    setLockMsg(null);
+
+    if (noteId && collabRoomReady) {
+      if (drawingBlocked) {
+        setLockMsg(`${drawingLock?.holderNombre ?? 'Otro usuario'} está dibujando`);
+        return;
+      }
+      const res = await acquireResourceLock('drawing_canvas', canvasLockId);
+      if (!res.ok) {
+        setLockMsg(
+          res.reason === 'denied'
+            ? `${res.holderName ?? 'Otro usuario'} está dibujando`
+            : 'No se pudo obtener el lock de dibujo',
+        );
+        return;
+      }
+      startLockRenew('drawing_canvas', canvasLockId);
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -256,15 +417,29 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   const stopDraw = () => {
     if (drawing && currentStroke.current && currentStroke.current.points.length > 1) {
-      strokesRef.current = [...strokesRef.current, currentStroke.current];
+      const finished = currentStroke.current;
+      strokesRef.current = [...strokesRef.current, finished];
       currentStroke.current = null;
       setCanvasVer(v => v + 1);
+      if (noteId && collabRoomReady && !remoteApplying.current) {
+        broadcastStroke({
+          points: finished.points,
+          color: finished.color,
+          size: finished.size,
+          eraser: finished.eraser,
+        });
+      }
+    }
+    if (noteId && collabRoomReady) {
+      releaseResourceLock('drawing_canvas', canvasLockId);
+      clearLockRenew();
     }
     setDrawing(false);
   };
 
   // ── Items ──
   const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!puedeEditar) return;
     if (tool === 'pen' || tool === 'eraser') return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left; const y = e.clientY - rect.top;
@@ -279,9 +454,31 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     }
   };
 
-  const startDrag = (e: React.MouseEvent, id: string) => {
-    if (tool !== 'select') return;
+  const startDrag = async (e: React.MouseEvent, id: string) => {
+    if (!puedeEditar || tool !== 'select') return;
     e.stopPropagation();
+    setLockMsg(null);
+
+    if (noteId && collabRoomReady && isLockedByOther('board', id)) {
+      const lock = getLock('board', id);
+      setLockMsg(`${lock?.holderNombre ?? 'Otro usuario'} está editando este elemento`);
+      return;
+    }
+
+    if (noteId && collabRoomReady) {
+      const res = await acquireResourceLock('board', id);
+      if (!res.ok) {
+        setLockMsg(
+          res.reason === 'denied'
+            ? `${res.holderName ?? 'Otro usuario'} está editando este elemento`
+            : 'No se pudo mover el elemento',
+        );
+        return;
+      }
+      draggingItemId.current = id;
+      startLockRenew('board', id);
+    }
+
     const item = items.find(i => i.id === id);
     if (!item || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
@@ -316,7 +513,15 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setItems(prev => prev.map(i => i.id === dragging.id ? { ...i, x: e.clientX - rect.left - dragging.offsetX, y: e.clientY - rect.top - dragging.offsetY } : i));
   };
 
-  const stopDrag = () => { setDragging(null); setResizing(null); };
+  const stopDrag = () => {
+    if (draggingItemId.current && noteId && collabRoomReady) {
+      releaseResourceLock('board', draggingItemId.current);
+      draggingItemId.current = null;
+      clearLockRenew();
+    }
+    setDragging(null);
+    setResizing(null);
+  };
   const deleteItem = (id: string) => { setItems(prev => prev.filter(i => i.id !== id)); setSelectedId(null); };
 
   const cycleStatus = (id: string) => {
@@ -412,10 +617,18 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             setSpeechText(result.text);
           }
         } catch (error: any) {
-          setSpeechError(
-            error?.response?.data?.message ||
-            'No se pudo transcribir el audio. Inténtalo nuevamente.'
-          );
+          const yaHayTexto =
+            finalTranscriptRef.current.trim().length > 0 ||
+            interimTranscriptRef.current.trim().length > 0;
+
+          if (!yaHayTexto) {
+            setSpeechError(
+              error?.response?.data?.message ||
+              'No se pudo transcribir el audio. Inténtalo nuevamente.'
+            );
+          } else {
+            setSpeechError('');
+          }
         } finally {
           setSpeechLoading(false);
         }
@@ -598,13 +811,32 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', backgroundColor: 'var(--whiteboard-bg)' }}>
 
+      {esInvitado && (
+        <div style={{
+          padding: '10px 16px',
+          backgroundColor: '#E8F0FF',
+          borderBottom: '0.5px solid #C8D8F0',
+          fontSize: '0.85rem',
+          color: '#405880',
+          fontWeight: 300,
+          flexShrink: 0,
+        }}>
+          Te invitaron a colaborar en este tablero como{' '}
+          <strong style={{ fontWeight: 500 }}>{rolLabel[miRol] || miRol}</strong>
+          {!puedeEditar && ' — modo solo lectura'}
+        </div>
+      )}
+
       {/* ── TOOLBAR ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', backgroundColor: 'var(--whiteboard-toolbar-bg)', borderBottom: '0.5px solid var(--whiteboard-toolbar-border)', flexShrink: 0, flexWrap: 'nowrap', overflowX: 'auto', position: 'relative', zIndex: 50 }}>
 
         {/* Salir */}
         {onBack && (
           <button onClick={async () => {
-            if (noteId && isLoaded.current) { if (saveTimer.current) clearTimeout(saveTimer.current); await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) }); }
+            if (noteId && isLoaded.current && puedeEditar) {
+              if (saveTimer.current) clearTimeout(saveTimer.current);
+              await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+            }
             onBack();
           }} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', marginRight: '4px' }}>
             ← Mis Notas
@@ -693,9 +925,22 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           </ToolBtn>
         </div>
 
+        {noteId && (
+          <CollaborationBar
+            connected={collabConnected}
+            roomReady={collabRoomReady}
+            joinError={collabJoinError}
+            presencia={collabPresencia}
+            locks={collabLocks}
+            drawingLock={drawingLock}
+            lockMsg={lockMsg}
+            esColaborativa={esColaborativa || colaboradores.length > 0}
+          />
+        )}
+
         {/* Guardar */}
         <div style={{ marginLeft: 'auto' }}>
-          {noteId && (
+          {noteId && puedeEditar && (
             <button onClick={guardarAhora} disabled={guardando} style={{ padding: '6px 14px', borderRadius: '8px', border: 'none', backgroundColor: guardado ? '#D8F8EC' : 'var(--primary)', color: guardado ? '#408060' : '#FFFFFF', fontSize: '0.8rem', cursor: guardando ? 'not-allowed' : 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
               {guardando ? 'Guardando...' : guardado ? '✓ Guardado' : 'Guardar'}
             </button>
@@ -714,8 +959,12 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         </svg>
 
         {/* Canvas dibujo */}
-        <canvas ref={canvasRef} width={2000} height={2000}
-          style={{ position: 'absolute', inset: 0, pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none' }}
+        <canvas ref={canvasRef} width={BOARD_W} height={BOARD_H}
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            pointerEvents: tool === 'pen' || tool === 'eraser' ? 'auto' : 'none',
+            opacity: drawingBlocked && !drawing ? 0.85 : 1,
+          }}
           onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw} />
 
         {/* Items */}

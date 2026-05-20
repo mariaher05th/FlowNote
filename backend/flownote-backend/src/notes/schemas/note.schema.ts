@@ -42,3 +42,4 @@ export const NoteSchema = SchemaFactory.createForClass(Note);
 
 // Índice de texto para búsqueda global
 NoteSchema.index({ titulo: 'text', contenido: 'text' });
+NoteSchema.index({ 'colaboradores.usuario_id': 1 });

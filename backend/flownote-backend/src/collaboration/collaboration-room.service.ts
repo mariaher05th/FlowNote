@@ -10,6 +10,7 @@ export interface SocketUser {
   sub: string;
   email: string;
   nombre: string;
+  username?: string;
 }
 
 @Injectable()
@@ -31,20 +32,20 @@ export class CollaborationRoomService {
     return { roomType, roomId: rest.join(':') };
   }
 
-  async puedeEntrar(ref: RoomRef, userId: string): Promise<boolean> {
+  async puedeEntrar(ref: RoomRef, userId: string, username?: string): Promise<boolean> {
     if (ref.roomType === 'espacio') {
       const rol = await this.accessService.obtenerRolEnEspacio(ref.roomId, userId);
       return rol !== null;
     }
     const nota = await this.noteModel.findById(ref.roomId);
     if (!nota) return false;
-    return this.accessService.puedeLeerNota(nota, userId);
+    return this.accessService.puedeLeerNota(nota, userId, username);
   }
 
-  async puedeEditarNota(notaId: string, userId: string): Promise<boolean> {
+  async puedeEditarNota(notaId: string, userId: string, username?: string): Promise<boolean> {
     const nota = await this.noteModel.findById(notaId);
     if (!nota) return false;
-    return this.accessService.puedeEditarNota(nota, userId);
+    return this.accessService.puedeEditarNota(nota, userId, username);
   }
 
   getUser(client: Socket): SocketUser {

@@ -1,4 +1,5 @@
 import api from './api';
+import { collaborationService } from './collaboration.service';
 
 export interface RegisterData {
   nombre: string;
@@ -29,6 +30,7 @@ export const authService = {
   },
 
   logout: () => {
+    collaborationService.disconnect();
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     window.location.href = '/login';

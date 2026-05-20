@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
+import { CommonModule } from '../common/common.module';
 import { CollaborationGateway } from './collaboration.gateway';
 import { CollaborationRoomService } from './collaboration-room.service';
 import { LockService } from './lock.service';
@@ -13,6 +14,7 @@ import { Note, NoteSchema } from '../notes/schemas/note.schema';
 
 @Module({
   imports: [
+    CommonModule,
     MongooseModule.forFeature([
       { name: CollaborationLock.name, schema: CollaborationLockSchema },
       { name: Note.name, schema: NoteSchema },
