@@ -32,6 +32,7 @@ describe('AccessService', () => {
     autor_id: { toString: () => userId },
     es_colaborativa: false,
     espacio_id: null,
+    colaboradores: [],
     ...overrides,
   });
 
@@ -56,12 +57,27 @@ describe('AccessService', () => {
       expect(ok).toBe(true);
     });
 
-    it('cualquiera puede leer nota colaborativa', async () => {
+    it('colaborador invitado puede leer', async () => {
       const ok = await service.puedeLeerNota(
-        notaBase({ autor_id: { toString: () => otroId }, es_colaborativa: true }) as any,
+        notaBase({
+          autor_id: { toString: () => otroId },
+          colaboradores: [{ usuario_id: userId, username: 'bob', rol: 'editor' }],
+        }) as any,
         userId,
+        'bob',
       );
       expect(ok).toBe(true);
+    });
+
+    it('usuario ajeno no puede leer nota colaborativa sin invitación', async () => {
+      const ok = await service.puedeLeerNota(
+        notaBase({
+          autor_id: { toString: () => otroId },
+          es_colaborativa: true,
+        }) as any,
+        userId,
+      );
+      expect(ok).toBe(false);
     });
 
     it('miembro del espacio puede leer', async () => {
@@ -88,6 +104,30 @@ describe('AccessService', () => {
   });
 
   describe('puedeEditarNota', () => {
+    it('colaborador editor puede editar', async () => {
+      const ok = await service.puedeEditarNota(
+        notaBase({
+          autor_id: { toString: () => otroId },
+          colaboradores: [{ usuario_id: userId, username: 'bob', rol: 'editor' }],
+        }) as any,
+        userId,
+        'bob',
+      );
+      expect(ok).toBe(true);
+    });
+
+    it('colaborador observador no puede editar', async () => {
+      const ok = await service.puedeEditarNota(
+        notaBase({
+          autor_id: { toString: () => otroId },
+          colaboradores: [{ usuario_id: userId, username: 'bob', rol: 'observador' }],
+        }) as any,
+        userId,
+        'bob',
+      );
+      expect(ok).toBe(false);
+    });
+
     it('editor del espacio puede editar', async () => {
       spaceModel.findById.mockResolvedValue({
         miembros: [{ usuario_id: { toString: () => userId }, rol: 'editor' }],
@@ -102,7 +142,7 @@ describe('AccessService', () => {
       expect(ok).toBe(true);
     });
 
-    it('observador no puede editar', async () => {
+    it('observador del espacio no puede editar', async () => {
       spaceModel.findById.mockResolvedValue({
         miembros: [{ usuario_id: { toString: () => userId }, rol: 'observador' }],
       });

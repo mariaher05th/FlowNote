@@ -31,7 +31,7 @@ export function CreateNoteModal({ onClose, onCreada }: Props) {
   const user = JSON.parse(localStorage.getItem('user') || '{}');
 
   const creador: Colaborador = {
-    _id: user.id || '',
+    _id: String(user.id || user._id || ''),
     nombre: user.nombre || '',
     apellido: user.apellido || '',
     username: user.username || '',
@@ -68,25 +68,38 @@ export function CreateNoteModal({ onClose, onCreada }: Props) {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Búsqueda con debounce — mínimo 2 caracteres
+  const normalizarTermino = (texto: string) => texto.trim().replace(/^@+/, '');
+
+  // Búsqueda con debounce — @usuario desde 1 carácter; sin @ desde 2
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (busqueda.length < 2) { setResultados([]); setBuscando(false); return; }
+
+    const raw = busqueda.trim();
+    const term = normalizarTermino(raw);
+    const minLen = raw.startsWith('@') ? 1 : 2;
+
+    if (term.length < minLen) {
+      setResultados([]);
+      setBuscando(false);
+      return;
+    }
+
     setBuscando(true);
     debounceRef.current = setTimeout(async () => {
       try {
-        const data = await authService.buscarUsuarios(busqueda);
-        setResultados(data.filter(u => !colaboradores.find(c => c._id === u._id)));
+        const data = await authService.buscarUsuarios(term);
+        const idsAgregados = new Set(colaboradores.map(c => String(c._id)));
+        setResultados(data.filter(u => !idsAgregados.has(String(u._id))));
       } catch {
         setResultados([]);
       } finally {
         setBuscando(false);
       }
-    }, 350);
-  }, [busqueda]);
+    }, 300);
+  }, [busqueda, colaboradores]);
 
   const agregarColab = (u: UsuarioBusqueda) => {
-    setColab(prev => [...prev, { ...u, rol: 'editor' }]);
+    setColab(prev => [...prev, { ...u, _id: String(u._id), rol: 'editor' }]);
     setBusqueda('');
     setResultados([]);
   };
@@ -111,7 +124,12 @@ export function CreateNoteModal({ onClose, onCreada }: Props) {
         titulo: nombre.trim(),
         es_colaborativa: modo === 'colaborativa',
         colaboradores: modo === 'colaborativa'
-          ? colaboradores.map(c => ({ usuario_id: c._id, username: c.username, nombre: c.nombre, rol: c.rol }))
+          ? colaboradores.map(c => ({
+              usuario_id: String(c._id),
+              username: c.username,
+              nombre: `${c.nombre}${c.apellido ? ` ${c.apellido}` : ''}`.trim(),
+              rol: c.rol,
+            }))
           : [],
       });
       onCreada(nueva._id);
@@ -199,7 +217,7 @@ export function CreateNoteModal({ onClose, onCreada }: Props) {
                   <input
                     value={busqueda}
                     onChange={e => setBusqueda(e.target.value)}
-                    placeholder="Buscar por nombre de usuario..."
+                    placeholder="Escribe @usuario para invitar..."
                     style={{
                       width: '100%', padding: '0.7rem 1rem', borderRadius: '12px',
                       border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB',
@@ -259,13 +277,15 @@ export function CreateNoteModal({ onClose, onCreada }: Props) {
                   )}
 
                   {/* Sin resultados */}
-                  {!buscando && busqueda.length >= 2 && resultados.length === 0 && (
+                  {!buscando && normalizarTermino(busqueda).length >= (busqueda.trim().startsWith('@') ? 1 : 2) && resultados.length === 0 && (
                     <div style={{
                       position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
                       backgroundColor: '#FFFFFF', borderRadius: '12px',
                       border: '0.5px solid #E4DCF4', padding: '0.75rem 1rem',
                       fontSize: '0.85rem', color: '#B0A0C0',
-                    }}>No se encontraron usuarios.</div>
+                    }}>
+                      No hay usuarios con «{normalizarTermino(busqueda)}». Deben estar registrados en FlowNote.
+                    </div>
                   )}
                 </div>
 

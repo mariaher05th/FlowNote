@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AppController } from './app.controller';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -33,5 +34,6 @@ import { CollaborationModule } from './collaboration/collaboration.module';
     TemplatesModule,
     CollaborationModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}

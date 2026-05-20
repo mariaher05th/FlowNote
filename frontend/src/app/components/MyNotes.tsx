@@ -6,6 +6,10 @@ const statusLabel: Record<string, string> = {
   pendiente: 'Pendiente', en_progreso: 'En progreso', completado: 'Completado',
 };
 
+const rolLabel: Record<string, string> = {
+  admin: 'Administrador', editor: 'Editor', revisor: 'Revisor', observador: 'Observador',
+};
+
 export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) {
   const [notes, setNotes]           = useState<Note[]>([]);
   const [loading, setLoading]       = useState(true);
@@ -14,6 +18,18 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
   const [showModal, setShowModal]   = useState(false);
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
+  const miUserId = String(user.id || user._id || '');
+
+  const esAutor = (nota: Note) => String(nota.autor_id || '') === miUserId;
+  const soyInvitado = (nota: Note) =>
+    nota.es_colaborativa && !esAutor(nota) && nota.colaboradores?.some(
+      c => String(c.usuario_id) === miUserId || c.username === user.username,
+    );
+  const miRolEn = (nota: Note) =>
+    nota.colaboradores?.find(
+      c => String(c.usuario_id) === miUserId || c.username === user.username,
+    )?.rol;
+  const puedeEliminar = (nota: Note) => esAutor(nota) || miRolEn(nota) === 'admin';
 
   useEffect(() => {
     notesService.getAll()
@@ -38,18 +54,10 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
 
   const filtered = notes.filter(n => {
     const matchSearch = n.titulo.toLowerCase().includes(search.toLowerCase());
-    const matchFilter = filter === 'all' || n.status === filter ||
-      (filter === 'pendiente' && n.estado === 'pendiente') ||
-      (filter === 'en_progreso' && n.estado === 'en_progreso') ||
-      (filter === 'completado' && n.estado === 'completado');
-    return matchSearch && (filter === 'all' || n.estado === filter);
+    const matchEstado = filter === 'all' || n.estado === filter;
+    const matchCompartidas = filter !== 'compartidas' || soyInvitado(n);
+    return matchSearch && matchEstado && matchCompartidas;
   });
-
-  const esAdmin = (nota: Note) => {
-    if (!nota.es_colaborativa) return true;
-    const yo = nota.colaboradores?.find(c => c.username === user.username);
-    return !yo || yo.rol === 'admin';
-  };
 
   return (
     <div style={{ padding: '3rem' }}>
@@ -73,7 +81,7 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
             fontFamily: 'inherit', fontWeight: 300,
           }}
         />
-        {(['all', 'pendiente', 'en_progreso', 'completado'] as const).map(f => (
+        {(['all', 'compartidas', 'pendiente', 'en_progreso', 'completado'] as const).map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
             padding: '0.5rem 1rem', borderRadius: '20px', cursor: 'pointer',
             fontSize: '0.8125rem', fontWeight: filter === f ? 400 : 300,
@@ -81,7 +89,7 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
             color: filter === f ? 'var(--primary)' : 'var(--subtle-fg)',
             border: '0.5px solid var(--card-border)',
           }}>
-            {{ all: 'Todas', pendiente: 'Pendientes', en_progreso: 'En progreso', completado: 'Completadas' }[f]}
+            {{ all: 'Todas', compartidas: 'Compartidas conmigo', pendiente: 'Pendientes', en_progreso: 'En progreso', completado: 'Completadas' }[f]}
           </button>
         ))}
 
@@ -125,7 +133,7 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
             onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
           >
             {/* Botón eliminar — solo visible al hover */}
-            {esAdmin(note) && (
+            {puedeEliminar(note) && (
               <button
                 onClick={e => handleEliminar(note._id, e)}
                 style={{
@@ -155,7 +163,12 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
                 padding: '2px 10px', borderRadius: '20px',
               }}>{statusLabel[note.estado] || note.estado}</span>
 
-              {note.es_colaborativa && (
+              {soyInvitado(note) ? (
+                <span style={{
+                  fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px',
+                  backgroundColor: '#E8F0FF', color: '#5070B0', fontWeight: 400,
+                }}>Compartida contigo</span>
+              ) : note.es_colaborativa && (
                 <span style={{
                   fontSize: '0.7rem', padding: '2px 8px', borderRadius: '10px',
                   backgroundColor: '#F0D8EC', color: '#C070A0', fontWeight: 400,
@@ -173,6 +186,12 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
                   }}>{tag}</span>
                 ))}
               </div>
+            )}
+
+            {soyInvitado(note) && miRolEn(note) && (
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted-fg)', margin: '0 0 0.5rem', fontWeight: 300 }}>
+                Tu rol: {rolLabel[miRolEn(note)!] || miRolEn(note)}
+              </p>
             )}
 
             {/* Colaboradores */}

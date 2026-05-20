@@ -39,6 +39,7 @@ export const COLLABORATION_EVENTS = {
   // Sistema
   connected: 'connected',
   joined: 'joined',
+  join_result: 'join_result',
   join_denied: 'join_denied',
   left: 'left',
   presence_joined: 'presence_joined',
@@ -47,6 +48,7 @@ export const COLLABORATION_EVENTS = {
   locks_snapshot: 'locks_snapshot',
   // Locks
   lock_granted: 'lock_granted',
+  lock_result: 'lock_result',
   lock_denied: 'lock_denied',
   lock_acquired: 'lock_acquired',
   lock_released: 'lock_released',
