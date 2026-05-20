@@ -99,6 +99,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [canvasVer,  setCanvasVer]  = useState(0);
   const [penColor,   setPenColor]   = useState('#8070C8');
   const [penSize,    setPenSize]    = useState(3);
+  const [eraserSize, setEraserSize] = useState(24);
   const [editingId,  setEditingId]  = useState<string | null>(null);
   const [editText,   setEditText]   = useState('');
   const [guardando,  setGuardando]  = useState(false);
@@ -124,7 +125,6 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [collabResultados, setCollabResultados] = useState<any[]>([]);
   const [collabBuscando, setCollabBuscando] = useState(false);
   const collabDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [teamPanel,     setTeamPanel]       = useState(false);
   const [completarConfirm, setCompletarConfirm] = useState(false);
   const [noteEstado,    setNoteEstado]      = useState('pendiente');
   const [tooltip,       setTooltip]         = useState<{ text: string; x: number; y: number } | null>(null);
@@ -324,7 +324,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   const canvasLockId = noteId ?? 'canvas';
   const drawingLock = noteId ? getLock('drawing_canvas', canvasLockId) : undefined;
-  const drawingBlocked = noteId
+  // Solo bloquear si hay OTROS usuarios activos en el tablero ahora mismo
+  const otrosActivos = collabPresencia.filter(p => String(p.userId ?? '') !== miUserId).length > 0;
+  const drawingBlocked = noteId && otrosActivos
     ? isLockedByOther('drawing_canvas', canvasLockId)
     : false;
 
@@ -369,19 +371,20 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (tool !== 'pen' && tool !== 'eraser') return;
     setLockMsg(null);
 
-    if (noteId && collabRoomReady) {
+    // Solo aplicar sistema de locks si hay otros usuarios activos ahora mismo
+    if (noteId && collabRoomReady && otrosActivos) {
       if (drawingBlocked) {
         setLockMsg(`${drawingLock?.holderNombre ?? 'Otro usuario'} está dibujando`);
         return;
       }
       const res = await acquireResourceLock('drawing_canvas', canvasLockId);
       if (!res.ok) {
-        setLockMsg(
-          res.reason === 'denied'
-            ? `${res.holderName ?? 'Otro usuario'} está dibujando`
-            : 'No se pudo obtener el lock de dibujo',
-        );
-        return;
+        if (res.reason === 'denied') {
+          setLockMsg(`${res.holderName ?? 'Otro usuario'} está dibujando`);
+          return;
+        }
+        // Error técnico — se deja dibujar de todas formas
+        setLockMsg('Modo offline');
       }
       startLockRenew('drawing_canvas', canvasLockId);
     }
@@ -392,11 +395,11 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!ctx) return;
     const { x, y } = getCanvasPos(e, canvas);
     const isEraser = tool === 'eraser';
-    currentStroke.current = { color: penColor, size: isEraser ? 24 : penSize, eraser: isEraser, points: [{ x, y }] };
+    currentStroke.current = { color: penColor, size: isEraser ? eraserSize : penSize, eraser: isEraser, points: [{ x, y }] };
     ctx.beginPath(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
     ctx.strokeStyle = isEraser ? 'rgba(0,0,0,1)' : penColor;
-    ctx.lineWidth = isEraser ? 24 : penSize;
+    ctx.lineWidth = isEraser ? eraserSize : penSize;
     ctx.moveTo(x, y);
     setDrawing(true);
   };
@@ -662,9 +665,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       `<div style="background:${n.color};border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">${n.content}</div>`
     ).join('');
 
-    const win = window.open('', '_blank');
-    if (!win) return;
-    win.document.write(`<!DOCTYPE html><html><head>
+    const html = `<!DOCTYPE html><html><head>
       <title>${noteTitle || 'Tablero'}</title>
       <style>body{font-family:system-ui,sans-serif;margin:0;padding:24px;color:#2F2840} h1{font-weight:300;color:#8070C8;margin-bottom:4px} .section{margin-top:20px} h3{font-size:14px;color:#B0A0C0;font-weight:500;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px} img{max-width:100%;border-radius:8px;border:1px solid #eee} @media print{body{padding:0}}</style>
     </head><body>
@@ -674,8 +675,11 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       ${tareasHTML ? `<div class="section"><h3>Tareas</h3>${tareasHTML}</div>` : ''}
       ${notasHTML  ? `<div class="section"><h3>Notas</h3>${notasHTML}</div>` : ''}
       <script>window.onload=()=>{window.print()}</script>
-    </body></html>`);
-    win.document.close();
+    </body></html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (win) setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
 
   // ── Estado de tarea colores ──
@@ -736,7 +740,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Borrar">⬜</ToolBtn>
         </div>
 
-        {(tool === 'pen') && (
+        {tool === 'pen' && (
           <>
             <div style={{ display: 'flex', gap: '4px', alignItems: 'center', marginLeft: '4px' }}>
               {penColors.map(c => (
@@ -749,6 +753,20 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
               ))}
             </div>
           </>
+        )}
+
+        {tool === 'eraser' && (
+          <div style={{ display: 'flex', gap: '3px', alignItems: 'center', marginLeft: '4px' }}>
+            <span style={{ fontSize: '0.65rem', color: 'var(--muted-fg)', marginRight: '2px' }}>Tamaño</span>
+            {[12, 24, 48].map(s => (
+              <div key={s} onClick={() => setEraserSize(s)} title={`${s}px`} style={{
+                width: `${Math.round(s / 3) + 8}px`, height: `${Math.round(s / 3) + 8}px`,
+                borderRadius: '50%', cursor: 'pointer',
+                backgroundColor: eraserSize === s ? '#2F2840' : 'var(--card-border)',
+                transition: 'background 0.1s',
+              }} />
+            ))}
+          </div>
         )}
 
         <Sep />
