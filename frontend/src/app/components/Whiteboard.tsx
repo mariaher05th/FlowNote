@@ -246,6 +246,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     api.get(`/notes/${noteId}`).then(res => {
       const note = res.data;
       setNoteTitle(note.titulo || '');
+      setNoteEstado(note.estado || 'pendiente');
       setEsColaborativa(!!note.es_colaborativa);
       const cols: Colaborador[] = note.colaboradores || [];
       setColaboradores(cols);

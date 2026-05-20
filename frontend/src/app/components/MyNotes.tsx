@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CreateNoteModal } from './CreateNoteModal';
 import { notesService, Note } from '../../services/notes.service';
 import api from '../../services/api';
@@ -70,9 +70,9 @@ export function MyNotes({ goToBoard }: { goToBoard: (noteId: string) => void }) 
 
   const filtered = notes.filter(n => {
     const matchSearch = n.titulo.toLowerCase().includes(search.toLowerCase());
+    if (filter === 'compartidas') return matchSearch && soyInvitado(n);
     const matchEstado = filter === 'all' || n.estado === filter;
-    const matchCompartidas = filter !== 'compartidas' || soyInvitado(n);
-    return matchSearch && matchEstado && matchCompartidas;
+    return matchSearch && matchEstado;
   });
 
   return (
