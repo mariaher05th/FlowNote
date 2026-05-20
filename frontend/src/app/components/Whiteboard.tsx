@@ -249,6 +249,30 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const buildContenido = (currentItems: CanvasItem[]) =>
     JSON.stringify({ items: currentItems, strokes: strokesRef.current });
 
+  const calcularEstadoNota = (currentItems: CanvasItem[]): 'pendiente' | 'en_progreso' | 'completado' => {
+    const tareas = currentItems.filter(i => i.type === 'task');
+
+    if (tareas.length === 0) {
+      return 'pendiente';
+    }
+
+    const todasFinalizadas = tareas.every(t => t.status === 'finalizada');
+
+    if (todasFinalizadas) {
+      return 'completado';
+    }
+
+    const algunaEnProcesoOFinalizada = tareas.some(
+      t => t.status === 'en_proceso' || t.status === 'finalizada'
+    );
+
+    if (algunaEnProcesoOFinalizada) {
+      return 'en_progreso';
+    }
+
+    return 'pendiente';
+  };
+
   // ── Cargar nota ──
   useEffect(() => {
     isLoaded.current = false;
@@ -290,9 +314,15 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (!noteId || !isLoaded.current || remoteApplying.current || !puedeEditar) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+      const nuevoEstado = calcularEstadoNota(itemsRef.current);
+      api.put(`/notes/${noteId}`, {
+        contenido: buildContenido(itemsRef.current),
+        estado: nuevoEstado,
+      });
+      setNoteEstado(nuevoEstado);
     }, 500);
-    if (!collabRoomReady) return;
+      
+    if (!collabRoomReady) return;    
     if (collabTimer.current) clearTimeout(collabTimer.current);
     collabTimer.current = setTimeout(() => {
       broadcastBoard(itemsRef.current, strokesRef.current);
@@ -311,7 +341,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     return () => {
       if (noteId && isLoaded.current) {
         if (saveTimer.current) clearTimeout(saveTimer.current);
-        api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+
+        const nuevoEstado = calcularEstadoNota(itemsRef.current);
+
+        api.put(`/notes/${noteId}`, {
+          contenido: buildContenido(itemsRef.current),
+          estado: nuevoEstado,
+        });
       }
     };
   }, [noteId]);
@@ -331,7 +367,11 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setGuardando(true);
     try {
-      await api.put(`/notes/${noteId}`, { contenido: buildContenido(items) });
+      const nuevoEstado = calcularEstadoNota(items);
+      await api.put(`/notes/${noteId}`, {
+        contenido: buildContenido(items),
+        estado: nuevoEstado,  });
+      setNoteEstado(nuevoEstado);
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
     } finally { setGuardando(false); }
@@ -893,7 +933,14 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           <button onClick={async () => {
             if (noteId && isLoaded.current && puedeEditar) {
               if (saveTimer.current) clearTimeout(saveTimer.current);
-              await api.put(`/notes/${noteId}`, { contenido: buildContenido(itemsRef.current) });
+              const nuevoEstado = calcularEstadoNota(itemsRef.current);
+
+              await api.put(`/notes/${noteId}`, {
+                contenido: buildContenido(itemsRef.current),
+                estado: nuevoEstado,
+              });
+
+              setNoteEstado(nuevoEstado);
             }
             onBack();
           }} style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)', fontSize: '0.78rem', cursor: 'pointer', fontFamily: 'inherit', marginRight: '4px' }}>
