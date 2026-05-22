@@ -2,7 +2,6 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import api from '../../services/api';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { CollaborationBar } from './CollaborationBar';
-import { speechService } from '../../services/speech.service';
 
 // ── Tipos ──────────────────────────────────────────────
 type Tool = 'select' | 'pen' | 'eraser' | 'note' | 'task' | 'text';
@@ -83,8 +82,6 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const strokesRef    = useRef<Stroke[]>([]);
   const currentStroke = useRef<Stroke | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef('');
   const interimTranscriptRef = useRef('');
@@ -119,6 +116,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [speechText, setSpeechText] = useState('');
   const [speechError, setSpeechError] = useState('');
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [comandoFeedback, setComandoFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [lockMsg,    setLockMsg]    = useState<string | null>(null);
   const lockRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const draggingItemId = useRef<string | null>(null);
@@ -509,36 +507,37 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     }
   };
 
-  const startDrag = async (e: React.MouseEvent, id: string) => {
+  const startDrag = (e: React.MouseEvent, id: string) => {
     if (!puedeEditar || tool !== 'select') return;
     e.stopPropagation();
     setLockMsg(null);
 
+    // Bloqueo síncrono: si otro usuario ya tiene el lock, rechazar antes de iniciar
     if (noteId && collabRoomReady && isLockedByOther('board', id)) {
       const lock = getLock('board', id);
       setLockMsg(`${lock?.holderNombre ?? 'Otro usuario'} está editando este elemento`);
       return;
     }
 
-    if (noteId && collabRoomReady) {
-      const res = await acquireResourceLock('board', id);
-      if (!res.ok) {
-        setLockMsg(
-          res.reason === 'denied'
-            ? `${res.holderName ?? 'Otro usuario'} está editando este elemento`
-            : 'No se pudo mover el elemento',
-        );
-        return;
-      }
-      draggingItemId.current = id;
-      startLockRenew('board', id);
-    }
-
     const item = items.find(i => i.id === id);
     if (!item || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
+
+    // Iniciar drag INMEDIATAMENTE sin esperar red
     setDragging({ id, offsetX: e.clientX - rect.left - item.x, offsetY: e.clientY - rect.top - item.y });
     setSelectedId(id);
+
+    // Adquirir lock en segundo plano (no bloquea el drag)
+    if (noteId && collabRoomReady) {
+      draggingItemId.current = id;
+      acquireResourceLock('board', id).then(res => {
+        if (res.ok) {
+          startLockRenew('board', id);
+        } else if (res.reason === 'denied') {
+          setLockMsg(`${res.holderName ?? 'Otro usuario'} está editando este elemento`);
+        }
+      }).catch(() => {});
+    }
   };
 
   const startResizeHandle = (e: React.MouseEvent, id: string, handle: string) => {
@@ -678,124 +677,254 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     admin: '#8070C8', editor: '#C070A0', revisor: '#7090B8',
   };
 
-  const startSpeechRecording = async () => {
-    setSpeechError('');
-    setSpeechOpen(true);
-    setSpeechText('');
+  // ── COMANDOS DE VOZ ──────────────────────────────────
+
+  const parsearDia = (dia: string): string => {
+    const hoy = new Date();
+    const mapa: Record<string, number> = {
+      hoy: 0, manana: 1, mañana: 1,
+      lunes: 1, martes: 2, miercoles: 3, miércoles: 3,
+      jueves: 4, viernes: 5, sabado: 6, sábado: 6, domingo: 0,
+    };
+    const key = dia.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const offset = mapa[key];
+    if (offset === undefined) return hoy.toISOString().slice(0, 10);
+    const fecha = new Date(hoy);
+    if (offset === 0 && key !== 'hoy') {
+      const diff = (7 - hoy.getDay()) % 7 || 7;
+      fecha.setDate(hoy.getDate() + diff);
+    } else if (key !== 'hoy') {
+      const diaTarget = offset;
+      const diffDias = (diaTarget - hoy.getDay() + 7) % 7 || 7;
+      fecha.setDate(hoy.getDate() + diffDias);
+    }
+    return fecha.toISOString().slice(0, 10);
+  };
+
+  const parsearHora = (hora: string): string => {
+    const m = hora.match(/(\d{1,2})(?::(\d{2}))?(?:\s*(am?|pm?))?/i);
+    if (!m) return '09:00';
+    let h = parseInt(m[1]);
+    const min = m[2] || '00';
+    const ap = (m[3] || '').toLowerCase();
+    if ((ap === 'pm' || ap === 'p') && h < 12) h += 12;
+    if ((ap === 'am' || ap === 'a') && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  };
+
+  // Normaliza texto para comparar sin tildes ni mayúsculas
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+
+  // Posición central del canvas para nuevos items
+  const centroCanvas = (w = 220, h = 100) => {
+    const r = containerRef.current?.getBoundingClientRect();
+    return { x: r ? r.width / 2 - w / 2 : 150, y: r ? r.height / 2 - h / 2 : 150 };
+  };
+
+  // Busca el colaborador que más se acerca al texto hablado (username o nombre)
+  // Si no hay coincidencia o no es nota colaborativa → se lo asigna al usuario actual
+  const resolverAsignado = (hablado: string): { username: string; nombre: string } => {
+    const s      = norm(hablado);
+    const sJunto = s.replace(/\s+/g, ''); // "Mari 05 th" → "mari05th"
+    const candidatos = esColaborativa ? colaboradores.filter(
+      (c: any) => !c.invitacion || c.invitacion === 'aceptada',
+    ) : [];
+
+    // Cuántos caracteres tienen en común (orden no importa)
+    const similitud = (a: string, b: string) => {
+      if (!a || !b) return 0;
+      const set = new Set(b.split(''));
+      return a.split('').filter(ch => set.has(ch)).length / Math.max(a.length, b.length);
+    };
+
+    // Prueba exacta / prefijo / nombre
+    let c = candidatos.find(x => norm(x.username) === s || norm(x.username) === sJunto);
+    if (!c) c = candidatos.find(x => norm(x.username).startsWith(sJunto) || sJunto.startsWith(norm(x.username)));
+    if (!c) c = candidatos.find(x => norm(x.nombre.split(' ')[0]) === s);
+    if (!c) c = candidatos.find(x => norm(x.nombre).includes(s));
+
+    // Fuzzy: mayor similitud entre username (sin espacios) y lo hablado (sin espacios)
+    if (!c && candidatos.length > 0) {
+      const ranked = candidatos
+        .map(x => ({ x, score: Math.max(similitud(norm(x.username), sJunto), similitud(norm(x.nombre), s)) }))
+        .sort((a, b) => b.score - a.score);
+      if (ranked[0].score >= 0.5) c = ranked[0].x;
+    }
+
+    if (c) return { username: c.username, nombre: c.nombre };
+    return { username: user.username, nombre: user.nombre || user.username };
+  };
+
+  const ejecutarComandoVoz = async (texto: string): Promise<boolean> => {
+    const t = norm(texto);
+
+    // Quita el prefijo de activación y devuelve el resto del texto
+    const tras = (patron: RegExp): string =>
+      t.replace(patron, '').trim();
+
+    // ── 📝 NOTA RÁPIDA ──────────────────────────────────
+    // "crea una nota rapida", "anota que...", "nota rapida de...", etc.
+    if (/\b(nota\s+rapida|anota(?:r)?|crea(?:r)?\s+(?:una?\s+)?nota|agrega(?:r)?\s+(?:una?\s+)?nota|escribe?\s+(?:una?\s+)?nota)\b/.test(t)) {
+      const contenido = tras(/.*?\b(?:nota\s+rapida\s*(?:de\s+|sobre\s+|con\s+)?|anota(?:r)?\s*(?:que\s+)?|crea(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+|que\s+diga\s+)?|agrega(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+)?|escribe?\s+(?:una?\s+)?nota\s*(?:que\s+diga\s+)?)/);
+      const { x, y } = centroCanvas(200, 140);
+      setItems(prev => [...prev, { id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140, content: contenido || '...', color: '#FFF8E7' }]);
+      setComandoFeedback({ ok: true, msg: contenido ? `📝 Nota: "${contenido}"` : '📝 Nota creada' });
+      setTool('select');
+      return true;
+    }
+
+    // ── ✅ TAREA CON ASIGNACIÓN ──────────────────────────
+    // "asigna una tarea a mary", "crea tarea de compras para carlos", etc.
+    // Captura TODO lo que viene después de "a/para" (puede ser varias palabras)
+    // Usa lastIndexOf para encontrar el último "a" / "para" como separador
+    if (/\b(asigna(?:r)?|crea(?:r)?|agrega(?:r)?)\b.*\btarea\b/.test(t)) {
+      const lastA    = t.lastIndexOf(' a ');
+      const lastPara = t.lastIndexOf(' para ');
+      const splitPos = Math.max(lastA, lastPara);
+      if (splitPos !== -1) {
+        const sepLen   = splitPos === lastPara ? 6 : 3; // " para " = 6, " a " = 3
+        const antesAsig = t.slice(0, splitPos);
+        const hablado   = t.slice(splitPos + sepLen).replace(/^@/, '').trim();
+        const titulo    = antesAsig.replace(/.*?\btarea\s*(?:de\s+|la\s+|una?\s+)?/, '').trim() || 'Nueva tarea';
+        const { username, nombre } = resolverAsignado(hablado);
+        const { x, y } = centroCanvas(240, 90);
+        setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', asignadoA: username, color: '' }]);
+        setComandoFeedback({ ok: true, msg: `✅ Tarea "${titulo}" → ${nombre} (@${username})` });
+        setTool('select');
+        return true;
+      }
+    }
+
+    // ── ✅ TAREA SIMPLE ──────────────────────────────────
+    // "crea una tarea de compras", "necesito hacer...", "pendiente:..."
+    if (/\b(crea(?:r)?\s+(?:una?\s+)?tarea|agrega(?:r)?\s+(?:una?\s+)?tarea|necesito\s+(?:hacer|recordar)|pendiente:|tarea:)\b/.test(t)) {
+      const titulo = tras(/.*?\b(?:crea(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|agrega(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|necesito\s+(?:hacer|recordar)\s+|pendiente:\s*|tarea:\s*)/) || 'Nueva tarea';
+      const { x, y } = centroCanvas(240, 90);
+      setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', color: '' }]);
+      setComandoFeedback({ ok: true, msg: `✅ Tarea: "${titulo}"` });
+      setTool('select');
+      return true;
+    }
+
+    // ── 🔔 RECORDATORIO ──────────────────────────────────
+    // "recuérdame X el viernes a las 6pm"
+    const mRec = t.match(/\b(?:recuerdame|ponme\s+(?:un\s+)?recordatorio|avisame|recuerda(?:\s+que)?|agenda(?:r)?)\b\s*(.*?)\s+(?:el\s+)?(\w+)\s+a\s+las?\s+(\d{1,2}(?::\d{2})?\s*(?:am?|pm?)?)/);
+    if (mRec) {
+      const titulo = mRec[1].replace(/^(?:de|que|para)\s+/, '').trim();
+      const fecha = parsearDia(mRec[2]);
+      const hora  = parsearHora(mRec[3]);
+      try {
+        await api.post('/reminders', { nota_id: noteId || '', mensaje: titulo || 'Recordatorio', fecha_hora: new Date(`${fecha}T${hora}:00`).toISOString() });
+        setComandoFeedback({ ok: true, msg: `🔔 "${titulo || 'Recordatorio'}" · ${mRec[2]} ${hora}` });
+        setRemExito(true); setTimeout(() => setRemExito(false), 3000);
+      } catch { setComandoFeedback({ ok: false, msg: 'No se pudo crear el recordatorio.' }); }
+      return true;
+    }
+
+    // ── 💬 TEXTO LIBRE ───────────────────────────────────
+    // "escribe en el tablero...", "agrega texto...", "pon texto..."
+    if (/\b(escribe?\s+(?:en\s+el\s+tablero|texto)|agrega(?:r)?\s+(?:un\s+)?texto|pon(?:er)?\s+(?:el\s+)?texto)\b/.test(t)) {
+      const contenido = tras(/.*?\b(?:escribe?\s+(?:en\s+el\s+tablero\s+|texto\s+)?|agrega(?:r)?\s+(?:un\s+)?texto\s*(?:que\s+diga\s+)?|pon(?:er)?\s+(?:el\s+)?texto\s*)/);
+      if (!contenido) return false;
+      const { x, y } = centroCanvas(200, 50);
+      setItems(prev => [...prev, { id: Date.now().toString(), type: 'text', x, y, width: 220, height: 50, content: contenido, color: 'transparent' }]);
+      setComandoFeedback({ ok: true, msg: `💬 Texto: "${contenido}"` });
+      setTool('select');
+      return true;
+    }
+
+    // ── 🗑️ BORRAR ÚLTIMO ────────────────────────────────
+    if (/\b(borra(?:r)?\s+(?:el\s+)?ultimo|elimina(?:r)?\s+(?:lo\s+)?ultimo|deshacer|deshaz)\b/.test(t)) {
+      setItems(prev => {
+        if (prev.length === 0) return prev;
+        const last = prev[prev.length - 1];
+        setComandoFeedback({ ok: true, msg: `🗑️ Eliminado: "${last.content?.slice(0, 30)}"` });
+        return prev.slice(0, -1);
+      });
+      return true;
+    }
+
+    return false;
+  };
+
+  const iniciarReconocimiento = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechError('Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.');
+      setSpeechSupported(false);
+      return;
+    }
+
     finalTranscriptRef.current = '';
     interimTranscriptRef.current = '';
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'es-CO';
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-      audioChunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
+    recognition.onresult = (event: any) => {
+      let interimText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscriptRef.current += transcript + ' ';
+          ejecutarComandoVoz(finalTranscriptRef.current.trim()).then(esComando => {
+            if (esComando) stopSpeechRecording();
+          });
+        } else {
+          interimText += transcript;
         }
-      };
-
-      recorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
-
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-
-        if (!audioBlob.size) {
-          setSpeechError('No se detectó audio para transcribir.');
-          setSpeechLoading(false);
-          return;
-        }
-
-        setSpeechLoading(true);
-
-        try {
-          const result = await speechService.transcribe(audioBlob);
-
-          if (result?.text?.trim()) {
-            setSpeechText(result.text);
-          }
-        } catch (error: any) {
-          const yaHayTexto =
-            finalTranscriptRef.current.trim().length > 0 ||
-            interimTranscriptRef.current.trim().length > 0;
-
-          if (!yaHayTexto) {
-            setSpeechError(
-              error?.response?.data?.message ||
-              'No se pudo transcribir el audio. Inténtalo nuevamente.'
-            );
-          } else {
-            setSpeechError('');
-          }
-        } finally {
-          setSpeechLoading(false);
-        }
-      };
-
-      recorder.start();
-
-      const SpeechRecognition =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition;
-
-      if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.lang = 'es-CO';
-        recognition.continuous = true;
-        recognition.interimResults = true;
-
-        recognition.onresult = (event: any) => {
-          let interimText = '';
-
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const transcript = event.results[i][0].transcript;
-
-            if (event.results[i].isFinal) {
-              finalTranscriptRef.current += transcript + ' ';
-            } else {
-              interimText += transcript;
-            }
-          }
-
-          interimTranscriptRef.current = interimText;
-
-          setSpeechText(
-            `${finalTranscriptRef.current}${interimTranscriptRef.current}`.trim()
-          );
-        };
-
-        recognition.onerror = () => {
-          setSpeechError('Hubo un problema escuchando el micrófono en tiempo real.');
-        };
-
-        recognitionRef.current = recognition;
-        recognition.start();
-        setSpeechSupported(true);
-      } else {
-        setSpeechSupported(false);
       }
+      interimTranscriptRef.current = interimText;
+      setSpeechText(`${finalTranscriptRef.current}${interimTranscriptRef.current}`.trim());
+    };
 
+    recognition.onerror = (event: any) => {
+      if (event.error === 'not-allowed') {
+        recognitionRef.current = null;
+        setSpeechListening(false);
+        setSpeechError('Permiso de micrófono denegado. Habilítalo en la configuración del navegador.');
+      }
+    };
+
+    recognition.onend = () => {
+      if (recognitionRef.current === recognition) {
+        try { recognition.start(); } catch {}
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
       setSpeechListening(true);
+      setSpeechSupported(true);
     } catch {
-      setSpeechListening(false);
-      setSpeechError('No se pudo acceder al micrófono. Revisa los permisos del navegador.');
+      setSpeechError('No se pudo iniciar el reconocimiento de voz.');
     }
+  };
+
+  const startSpeechRecording = () => {
+    setSpeechError('');
+    setSpeechOpen(true);
+    setSpeechText('');
+    setComandoFeedback(null);
+    iniciarReconocimiento();
+  };
+
+  const reanudarEscucha = () => {
+    setSpeechError('');
+    setComandoFeedback(null);
+    setSpeechText('');
+    iniciarReconocimiento();
   };
 
   const stopSpeechRecording = () => {
     setSpeechListening(false);
-
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
-    }
-
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
+    const rec = recognitionRef.current;
+    recognitionRef.current = null; // limpiar antes de stop para que onend no reinicie
+    if (rec) rec.stop();
   };
 
   const closeSpeechBox = () => {
@@ -1009,6 +1138,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
         {/* ── SECCIÓN ACCIONES ── */}
         <SectionLabel>Acciones</SectionLabel>
+
         <ToolBtn active={false} onClick={() => { setReminderModal(true); setRemTitulo(''); setRemFecha(new Date().toISOString().slice(0, 10)); setRemHora('09:00'); }} title="Crear recordatorio">🔔</ToolBtn>
 
         <ToolBtn
@@ -1224,11 +1354,16 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
                 </p>
                 <p style={{ margin: 0, color: '#B0A0C0', fontSize: '0.75rem' }}>
                   {speechListening
-                    ? 'Escuchando... habla con calma'
+                    ? 'Escuchando... di un comando o habla libremente'
                     : speechLoading
                       ? 'Procesando audio...'
                       : 'Puedes editar el texto antes de insertarlo'}
                 </p>
+                {speechListening && (
+                  <p style={{ margin: '2px 0 0', color: '#8070C8', fontSize: '0.7rem', fontWeight: 300 }}>
+                    Comandos: "Crea una nota rápida [texto]" · "Crea una tarea de [título]" · "Recuérdame [título] el viernes a las 5pm" · "Asigna una tarea de [título] a @usuario"
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1253,7 +1388,14 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
           {!speechSupported && (
             <div style={{ padding: '8px 10px', backgroundColor: '#FFF8E7', color: '#92400E', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '10px' }}>
-              Tu navegador no soporta vista previa en tiempo real, pero el audio sí se enviará al backend para transcripción.
+              Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.
+            </div>
+          )}
+
+          {comandoFeedback && (
+            <div style={{ padding: '10px 14px', backgroundColor: comandoFeedback.ok ? '#D1FAE5' : '#FDE2E8', color: comandoFeedback.ok ? '#065F46' : '#A8324E', borderRadius: '12px', fontSize: '0.875rem', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+              <span>{comandoFeedback.msg}</span>
+              <button onClick={() => setComandoFeedback(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', opacity: 0.6, fontSize: '1rem', flexShrink: 0 }}>✕</button>
             </div>
           )}
 
@@ -1267,7 +1409,6 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             value={speechText}
             onChange={e => setSpeechText(e.target.value)}
             placeholder="Aquí aparecerá la transcripción..."
-            disabled={speechLoading}
             style={{
               width: '100%',
               minHeight: '96px',
@@ -1287,18 +1428,56 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
             <button
               onClick={closeSpeechBox}
-              disabled={speechLoading}
               style={{
                 padding: '8px 14px',
                 borderRadius: '10px',
                 border: '1px solid #E4DCF4',
                 backgroundColor: 'transparent',
                 color: '#B0A0C0',
-                cursor: speechLoading ? 'not-allowed' : 'pointer',
+                cursor: 'pointer',
               }}
             >
               Cerrar
             </button>
+
+            <button
+              onClick={() => {
+                setSpeechText('');
+                finalTranscriptRef.current = '';
+                interimTranscriptRef.current = '';
+              }}
+              disabled={!speechText.trim()}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: '1px solid #E4DCF4',
+                backgroundColor: 'transparent',
+                color: speechText.trim() ? '#C04060' : '#D8D0EC',
+                cursor: speechText.trim() ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Limpiar
+            </button>
+
+            {/* Reanudar — solo visible cuando el mic está detenido */}
+            {!speechListening && (
+              <button
+                onClick={reanudarEscucha}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: '#8070C8',
+                  color: '#FFFFFF',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                🎙️ Reanudar
+              </button>
+            )}
 
             <button
               onClick={stopSpeechRecording}
@@ -1317,17 +1496,17 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
             <button
               onClick={insertSpeechText}
-              disabled={speechLoading || !speechText.trim()}
+              disabled={!speechText.trim()}
               style={{
                 padding: '8px 14px',
                 borderRadius: '10px',
                 border: 'none',
-                backgroundColor: !speechLoading && speechText.trim() ? '#8070C8' : '#D8D0EC',
+                backgroundColor: speechText.trim() ? '#8070C8' : '#D8D0EC',
                 color: '#FFFFFF',
-                cursor: !speechLoading && speechText.trim() ? 'pointer' : 'not-allowed',
+                cursor: speechText.trim() ? 'pointer' : 'not-allowed',
               }}
             >
-              {speechLoading ? 'Transcribiendo...' : 'Insertar en canvas'}
+              Insertar en canvas
             </button>
           </div>
         </div>
@@ -1434,41 +1613,167 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         </Modal>
       )}
 
-      {/* ── MODAL AGREGAR COLABORADOR ── */}
-      {addCollabModal && (
-        <Modal onClose={() => setAddCollabModal(false)}>
-          <h2 style={{ fontSize: '1.3rem', fontWeight: 300, color: '#2F2840', margin: '0 0 1.25rem' }}>Agregar colaborador</h2>
-          <input value={collabBusqueda} onChange={e => buscarColaboradores(e.target.value)}
-            placeholder="Buscar por @usuario o nombre..." autoFocus
-            style={{ width: '100%', padding: '0.75rem 1rem', borderRadius: '12px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.9rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '0.75rem' }} />
-          {collabBuscando && <p style={{ color: '#B0A0C0', fontSize: '0.85rem', margin: '0 0 0.5rem' }}>Buscando...</p>}
-          {collabResultados.length > 0 && (
-            <div style={{ border: '0.5px solid #E4DCF4', borderRadius: '12px', overflow: 'hidden', marginBottom: '0.75rem' }}>
-              {collabResultados.map(u => (
-                <div key={u._id} style={{ padding: '0.7rem 1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '0.5px solid #F0EBF8' }}>
-                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', backgroundColor: '#E0D8F8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', color: '#8070C8', fontWeight: 600, flexShrink: 0 }}>
-                    {u.nombre.charAt(0).toUpperCase()}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#2F2840', fontWeight: 400 }}>{u.nombre} {u.apellido}</p>
-                    <p style={{ margin: 0, fontSize: '0.75rem', color: '#B0A0C0' }}>@{u.username}</p>
-                  </div>
-                  <select onChange={e => e.target.value && agregarColaborador(u, e.target.value)} defaultValue=""
-                    style={{ padding: '4px 8px', borderRadius: '8px', border: '0.5px solid #E4DCF4', fontSize: '0.8rem', color: '#2F2840', cursor: 'pointer', outline: 'none' }}>
-                    <option value="" disabled>Rol...</option>
-                    <option value="editor">Editor</option>
-                    <option value="revisor">Revisor</option>
-                    <option value="admin">Admin</option>
-                  </select>
+      {/* ── PANEL LATERAL EQUIPO (GitHub-style) ── */}
+      {addCollabModal && (() => {
+        const miembrosActivos = colaboradores.filter((c: any) => !c.invitacion || c.invitacion === 'aceptada');
+        const tareasSinAsignar = items.filter(i => i.type === 'task' && !i.asignadoA);
+        const closePanel = () => { setAddCollabModal(false); setCollabBusqueda(''); setCollabResultados([]); };
+        const taskDot: Record<string, { bg: string; border: string; icon: string }> = {
+          pendiente:  { bg: '#FEF3C7', border: '#F59E0B', icon: '○' },
+          en_proceso: { bg: '#EDE9FE', border: '#8070C8', icon: '◑' },
+          finalizada: { bg: '#D1FAE5', border: '#059669', icon: '●' },
+        };
+        return (
+          <>
+            <div onClick={closePanel} style={{ position: 'fixed', inset: 0, zIndex: 1999, backgroundColor: 'rgba(47,40,64,0.18)' }} />
+            <div style={{ position: 'fixed', right: 0, top: 0, height: '100vh', width: '380px', backgroundColor: '#FFFFFF', zIndex: 2000, boxShadow: '-8px 0 40px rgba(47,40,64,0.14)', display: 'flex', flexDirection: 'column', fontFamily: 'inherit' }}>
+
+              {/* Header */}
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '0.5px solid #E8E4F4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 500, color: '#2F2840' }}>👥 Equipo</p>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#B0A0C0', fontWeight: 300 }}>{noteTitle}</p>
                 </div>
-              ))}
+                <button onClick={closePanel} style={{ width: '28px', height: '28px', borderRadius: '50%', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: '#B0A0C0', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#F0EBF8'; }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}>✕</button>
+              </div>
+
+              {/* Body — scrollable */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
+                {miembrosActivos.map(c => {
+                  const colBg     = c.rol === 'admin' ? '#EDE9FE' : c.rol === 'editor' ? '#F9E8F3' : '#E8EFF9';
+                  const colBorder = c.rol === 'admin' ? '#8070C8' : c.rol === 'editor' ? '#C070A0' : '#7090B8';
+                  const rolName   = c.rol === 'admin' ? 'Administrador' : c.rol === 'editor' ? 'Editor' : 'Revisor';
+                  const esYo = c.username === user.username;
+                  const tareas = items.filter(i => i.type === 'task' && i.asignadoA === c.username);
+                  return (
+                    <div key={c.username} style={{ marginBottom: '1.5rem' }}>
+                      {/* Colaborador header */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                        <div style={{ width: '34px', height: '34px', borderRadius: '50%', backgroundColor: colBg, border: `2px solid ${colBorder}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, color: colBorder, flexShrink: 0 }}>
+                          {c.nombre.charAt(0).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 500, color: '#2F2840', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            {c.nombre}
+                            {esYo && <span style={{ fontSize: '0.65rem', color: '#B0A0C0', fontWeight: 300 }}>tú</span>}
+                          </p>
+                          <p style={{ margin: 0, fontSize: '0.72rem', color: '#B0A0C0' }}>@{c.username}</p>
+                        </div>
+                        {miRol === 'admin' && !esYo ? (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                            <select value={c.rol}
+                              onChange={async e => {
+                                await api.patch(`/notes/${noteId}/colaboradores/${c.username}/rol`, { rol: e.target.value });
+                                setColaboradores(prev => prev.map(x => x.username === c.username ? { ...x, rol: e.target.value } : x));
+                              }}
+                              style={{ padding: '2px 6px', borderRadius: '6px', border: `0.5px solid ${colBorder}`, backgroundColor: colBg, color: colBorder, fontSize: '0.72rem', cursor: 'pointer', outline: 'none', fontWeight: 500 }}>
+                              <option value="admin">Admin</option>
+                              <option value="editor">Editor</option>
+                              <option value="revisor">Revisor</option>
+                            </select>
+                            <button onClick={async () => {
+                              if (!confirm(`¿Eliminar a @${c.username}?`)) return;
+                              await api.delete(`/notes/${noteId}/colaboradores/${c.username}`);
+                              setColaboradores(prev => prev.filter(x => x.username !== c.username));
+                            }} style={{ width: '22px', height: '22px', borderRadius: '50%', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: '#B0A0C0', fontSize: '0.7rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                              onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#FEE8EC'; e.currentTarget.style.color = '#C04060'; }}
+                              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#B0A0C0'; }}>✕</button>
+                          </div>
+                        ) : (
+                          <span style={{ padding: '2px 8px', borderRadius: '20px', backgroundColor: colBg, color: colBorder, fontSize: '0.7rem', fontWeight: 500, border: `0.5px solid ${colBorder}`, flexShrink: 0 }}>
+                            {rolName}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Timeline de tareas */}
+                      <div style={{ marginLeft: '17px', paddingLeft: '24px', position: 'relative', borderLeft: '1.5px solid #EAE4F4' }}>
+                        {tareas.length === 0 ? (
+                          <p style={{ margin: '0 0 0.25rem', fontSize: '0.75rem', color: '#C8B8D8', fontStyle: 'italic' }}>Sin tareas asignadas</p>
+                        ) : tareas.map(t => {
+                          const dot = taskDot[t.status || 'pendiente'];
+                          return (
+                            <div key={t.id} style={{ position: 'relative', marginBottom: '0.5rem', display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                              {/* Dot sobre la línea */}
+                              <div style={{ position: 'absolute', left: '-32px', top: '3px', width: '16px', height: '16px', borderRadius: '50%', backgroundColor: dot.bg, border: `1.5px solid ${dot.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.5rem', color: dot.border, flexShrink: 0 }}>
+                                {dot.icon}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <p style={{ margin: 0, fontSize: '0.8rem', color: '#2F2840', fontWeight: 400, lineHeight: 1.3 }}>{t.content}</p>
+                                <span style={{ fontSize: '0.65rem', color: dot.border, fontWeight: 500 }}>
+                                  {t.status === 'finalizada' ? 'Finalizada' : t.status === 'en_proceso' ? 'En proceso' : 'Pendiente'}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Tareas sin asignar */}
+                {tareasSinAsignar.length > 0 && (
+                  <div style={{ marginTop: '0.5rem', paddingTop: '1rem', borderTop: '0.5px solid #EAE4F4' }}>
+                    <p style={{ margin: '0 0 0.75rem', fontSize: '0.72rem', fontWeight: 600, color: '#B0A0C0', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Sin asignar</p>
+                    <div style={{ marginLeft: '17px', paddingLeft: '24px', position: 'relative', borderLeft: '1.5px dashed #EAE4F4' }}>
+                      {tareasSinAsignar.map(t => {
+                        const dot = taskDot[t.status || 'pendiente'];
+                        return (
+                          <div key={t.id} style={{ position: 'relative', marginBottom: '0.5rem' }}>
+                            <div style={{ position: 'absolute', left: '-32px', top: '3px', width: '16px', height: '16px', borderRadius: '50%', backgroundColor: dot.bg, border: `1.5px solid ${dot.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.5rem', color: dot.border }}>
+                              {dot.icon}
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.8rem', color: '#8070A8', fontWeight: 300, lineHeight: 1.3 }}>{t.content}</p>
+                            <span style={{ fontSize: '0.65rem', color: dot.border }}>{t.status === 'finalizada' ? 'Finalizada' : t.status === 'en_proceso' ? 'En proceso' : 'Pendiente'}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer — agregar miembro (solo admin) */}
+              {miRol === 'admin' && (
+                <div style={{ padding: '1rem 1.5rem', borderTop: '0.5px solid #E8E4F4', flexShrink: 0 }}>
+                  <p style={{ margin: '0 0 0.5rem', fontSize: '0.75rem', color: '#B0A0C0', fontWeight: 400 }}>Agregar miembro</p>
+                  <div style={{ position: 'relative' }}>
+                    <input value={collabBusqueda} onChange={e => buscarColaboradores(e.target.value)}
+                      placeholder="@usuario o nombre..."
+                      style={{ width: '100%', padding: '0.55rem 0.75rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: '#F6F4FB', fontSize: '0.85rem', color: '#2F2840', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    {collabBuscando && <p style={{ color: '#B0A0C0', fontSize: '0.75rem', margin: '4px 0 0' }}>Buscando...</p>}
+                    {collabResultados.length > 0 && (
+                      <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, backgroundColor: '#FFFFFF', border: '0.5px solid #E4DCF4', borderRadius: '10px', boxShadow: '0 -8px 24px rgba(0,0,0,0.1)', zIndex: 10, overflow: 'hidden', marginBottom: '4px' }}>
+                        {collabResultados.map(u => (
+                          <div key={u._id} style={{ padding: '0.55rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '0.5px solid #F0EBF8' }}>
+                            <div style={{ width: '26px', height: '26px', borderRadius: '50%', backgroundColor: '#E0D8F8', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.65rem', color: '#8070C8', fontWeight: 600, flexShrink: 0 }}>
+                              {u.nombre.charAt(0).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ margin: 0, fontSize: '0.8rem', color: '#2F2840', fontWeight: 400 }}>{u.nombre} {u.apellido}</p>
+                              <p style={{ margin: 0, fontSize: '0.68rem', color: '#B0A0C0' }}>@{u.username}</p>
+                            </div>
+                            <select defaultValue="" onChange={e => e.target.value && agregarColaborador(u, e.target.value)}
+                              style={{ padding: '2px 5px', borderRadius: '6px', border: '0.5px solid #E4DCF4', fontSize: '0.75rem', color: '#2F2840', cursor: 'pointer', outline: 'none' }}>
+                              <option value="" disabled>Rol...</option>
+                              <option value="editor">Editor</option>
+                              <option value="revisor">Revisor</option>
+                              <option value="admin">Admin</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={() => setAddCollabModal(false)} style={{ padding: '0.65rem 1.25rem', borderRadius: '10px', border: '0.5px solid #E4DCF4', backgroundColor: 'transparent', color: '#B0A0C0', cursor: 'pointer' }}>Cerrar</button>
-          </div>
-        </Modal>
-      )}
+          </>
+        );
+      })()}
 
       {/* ── MODAL COMPLETAR PROYECTO ── */}
       {completarConfirm && (

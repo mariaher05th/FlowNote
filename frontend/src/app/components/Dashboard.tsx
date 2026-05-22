@@ -543,7 +543,7 @@ export function Dashboard() {
   const pages: Record<string, React.ReactNode> = {
     inicio: <HomeContent widgets={widgets} moveWidget={moveWidget} removeWidget={removeWidget} onAddClick={openModal} nombre={nombre} onSave={saveWidgetConfig} onNavigate={goToBoard} loading={loadingWidgets} />,
     notas:         <MyNotes goToBoard={goToBoard} />,
-    workflows:     <Workflows goToTeam={() => setActivePage('equipo')} />,
+    workflows:     <Workflows />,
     equipo:        <Team />,
     recordatorios: <Reminders />,
     tablero:       <Whiteboard noteId={activeNoteId} onBack={() => setActivePage('notas')} />,

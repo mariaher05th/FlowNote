@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Users } from 'lucide-react';
 import { notesService, Note } from '../../services/notes.service';
+import { NoteTeamPanel } from './Team';
 
 interface Task { id: string; content: string; status: string; asignadoA?: string; }
 
@@ -22,19 +23,33 @@ const estadoColores: Record<string, { bg: string; fg: string; dot: string; label
 
 const rolColors: Record<string, string> = { admin: '#8070C8', editor: '#C070A0', revisor: '#7090B8' };
 
-type WorkflowsProps = { goToTeam: () => void; };
-
-export function Workflows({ goToTeam }: WorkflowsProps) {
-  const [notes, setNotes]     = useState<Note[]>([]);
-  const [loading, setLoading] = useState(true);
+export function Workflows() {
+  const [notes, setNotes]       = useState<Note[]>([]);
+  const [loading, setLoading]   = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [teamPanel, setTeamPanel] = useState<Note | null>(null);
 
-  useEffect(() => {
+  const user       = JSON.parse(localStorage.getItem('user') || '{}');
+  const miUsername = user.username || '';
+  const miUserId   = String(user.id || user._id || '');
+
+  const miRolEnNota = (note: Note) => {
+    const col = note.colaboradores?.find(
+      c => c.username === miUsername || String(c.usuario_id) === miUserId,
+    );
+    return col?.rol || (String(note.autor_id) === miUserId ? 'admin' : 'revisor');
+  };
+
+  const cargarNotas = () =>
     notesService.getAll()
-      .then(data => setNotes(data))
+      .then(data => {
+        setNotes(data);
+        setTeamPanel(prev => prev ? (data.find(n => n._id === prev._id) ?? null) : null);
+      })
       .catch(() => setNotes([]))
       .finally(() => setLoading(false));
-  }, []);
+
+  useEffect(() => { cargarNotas(); }, []);
 
   const toggle = (id: string) => {
     setExpanded(prev => {
@@ -138,7 +153,7 @@ export function Workflows({ goToTeam }: WorkflowsProps) {
 
                 {/* Botón equipo (solo collab) */}
                 {note.es_colaborativa && (
-                  <button onClick={e => { e.stopPropagation(); goToTeam(); }} title="Ver equipo"
+                  <button onClick={e => { e.stopPropagation(); setTeamPanel(note); }} title="Ver equipo"
                     style={{ width: '32px', height: '32px', borderRadius: '10px', border: 'none', backgroundColor: 'var(--highlight-bg)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
                     <Users size={15} strokeWidth={1.8} />
                   </button>
@@ -181,6 +196,50 @@ export function Workflows({ goToTeam }: WorkflowsProps) {
           );
         })}
       </div>
+
+      {/* ── PANEL LATERAL EQUIPO ── */}
+      {teamPanel && (() => {
+        const miRol = miRolEnNota(teamPanel);
+        const esAdmin = miRol === 'admin';
+        const aceptados = teamPanel.colaboradores?.filter((c: any) => !c.invitacion || c.invitacion === 'aceptada') ?? [];
+        return (
+          <>
+            <div onClick={() => setTeamPanel(null)} style={{ position: 'fixed', inset: 0, zIndex: 1999, backgroundColor: 'rgba(47,40,64,0.18)' }} />
+            <div style={{ position: 'fixed', right: 0, top: 0, height: '100vh', width: '380px', backgroundColor: 'var(--card-bg)', zIndex: 2000, boxShadow: '-8px 0 40px rgba(47,40,64,0.14)', display: 'flex', flexDirection: 'column', fontFamily: 'inherit' }}>
+
+              {/* Header */}
+              <div style={{ padding: '1.25rem 1.5rem', borderBottom: '0.5px solid var(--card-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                <div>
+                  <p style={{ margin: 0, fontSize: '1.05rem', fontWeight: 500, color: 'var(--card-title)' }}>👥 Equipo</p>
+                  <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 300 }}>{teamPanel.titulo} · {aceptados.length} miembro{aceptados.length !== 1 ? 's' : ''}</p>
+                </div>
+                <button onClick={() => setTeamPanel(null)} style={{ width: '28px', height: '28px', borderRadius: '50%', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', color: 'var(--muted-fg)', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; }}>✕</button>
+              </div>
+
+              {/* Tu rol */}
+              <div style={{ padding: '0.75rem 1.5rem', borderBottom: '0.5px solid var(--card-border)', backgroundColor: 'var(--app-bg)', flexShrink: 0 }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted-fg)', fontWeight: 300 }}>Tu rol: </span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 500, color: miRol === 'admin' ? '#8070C8' : miRol === 'editor' ? '#C070A0' : '#7090B8' }}>
+                  {miRol === 'admin' ? 'Administrador' : miRol === 'editor' ? 'Editor' : 'Revisor'}
+                </span>
+                {!esAdmin && <span style={{ fontSize: '0.72rem', color: 'var(--muted-fg)', marginLeft: '8px' }}>· solo lectura</span>}
+              </div>
+
+              {/* Lista de miembros */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '1rem 1.5rem' }}>
+                <NoteTeamPanel
+                  nota={teamPanel}
+                  miUsername={miUsername}
+                  miRol={miRol}
+                  onUpdated={cargarNotas}
+                />
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
