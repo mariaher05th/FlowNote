@@ -28,6 +28,7 @@ services:
       PORT: 3000
       JWT_SECRET: flownote_secret_2024
       JWT_EXPIRES_IN: 7d
+      OPENAI_API_KEY: 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
     ports:
       - "3000:3000"
 

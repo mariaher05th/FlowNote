@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { isAxiosError } from 'axios';
 import api from '../../services/api';
+import { speechService, esArchivoAudioValido } from '../../services/speech.service';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { CollaborationBar } from './CollaborationBar';
 
@@ -85,6 +87,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const recognitionRef = useRef<any>(null);
   const finalTranscriptRef = useRef('');
   const interimTranscriptRef = useRef('');
+  const audioFileInputRef = useRef<HTMLInputElement>(null);
   const lastInsertPositionRef = useRef<{ x: number; y: number }>({ x: 120, y: 120 });
 
   // Estado de la nota
@@ -116,6 +119,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [speechText, setSpeechText] = useState('');
   const [speechError, setSpeechError] = useState('');
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [speechAudioName, setSpeechAudioName] = useState('');
   const [comandoFeedback, setComandoFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [lockMsg,    setLockMsg]    = useState<string | null>(null);
   const lockRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -909,15 +913,66 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setSpeechError('');
     setSpeechOpen(true);
     setSpeechText('');
+    setSpeechAudioName('');
     setComandoFeedback(null);
+    finalTranscriptRef.current = '';
+    interimTranscriptRef.current = '';
     iniciarReconocimiento();
   };
 
   const reanudarEscucha = () => {
+    if (speechListening || speechLoading) return;
     setSpeechError('');
     setComandoFeedback(null);
-    setSpeechText('');
+    setSpeechAudioName('');
+    finalTranscriptRef.current = speechText.trim() ? `${speechText.trim()} ` : '';
+    interimTranscriptRef.current = '';
     iniciarReconocimiento();
+  };
+
+  const handleAudioFileUpload = async (file: File) => {
+    if (!esArchivoAudioValido(file)) {
+      setSpeechError('Formato no soportado. Usa webm, mp4, mp3, wav u ogg.');
+      return;
+    }
+
+    if (speechListening) stopSpeechRecording();
+
+    setSpeechOpen(true);
+    setSpeechError('');
+    setComandoFeedback(null);
+    setSpeechLoading(true);
+    setSpeechAudioName(file.name);
+
+    try {
+      const { text } = await speechService.transcribe(file);
+      if (!text) {
+        setSpeechError('No se detectó texto en el audio.');
+        setSpeechText('');
+        finalTranscriptRef.current = '';
+      } else {
+        setSpeechText(text);
+        finalTranscriptRef.current = `${text} `;
+        interimTranscriptRef.current = '';
+        await ejecutarComandoVoz(text);
+      }
+    } catch (err) {
+      let msg = 'Error al transcribir el audio. Verifica tu conexión e intenta de nuevo.';
+      if (isAxiosError<{ message?: string | string[] }>(err)) {
+        const raw = err.response?.data?.message;
+        if (typeof raw === 'string') msg = raw;
+        else if (Array.isArray(raw)) msg = raw.join('. ');
+      }
+      setSpeechError(msg);
+    } finally {
+      setSpeechLoading(false);
+      if (audioFileInputRef.current) audioFileInputRef.current.value = '';
+    }
+  };
+
+  const onAudioFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleAudioFileUpload(file);
   };
 
   const stopSpeechRecording = () => {
@@ -936,6 +991,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setSpeechText('');
     setSpeechError('');
     setSpeechLoading(false);
+    setSpeechAudioName('');
+    if (audioFileInputRef.current) audioFileInputRef.current.value = '';
   };
 
   const insertSpeechText = () => {
@@ -1146,6 +1203,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           onClick={() => {
             if (speechListening) {
               stopSpeechRecording();
+            } else if (speechOpen) {
+              reanudarEscucha();
             } else {
               startSpeechRecording();
             }
@@ -1356,8 +1415,10 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
                   {speechListening
                     ? 'Escuchando... di un comando o habla libremente'
                     : speechLoading
-                      ? 'Procesando audio...'
-                      : 'Puedes editar el texto antes de insertarlo'}
+                      ? 'Transcribiendo archivo de audio...'
+                      : speechAudioName
+                        ? `Transcripción de "${speechAudioName}" — puedes reanudar el micrófono`
+                        : 'Puedes editar el texto antes de insertarlo'}
                 </p>
                 {speechListening && (
                   <p style={{ margin: '2px 0 0', color: '#8070C8', fontSize: '0.7rem', fontWeight: 300 }}>
@@ -1405,10 +1466,19 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             </div>
           )}
 
+          <input
+            ref={audioFileInputRef}
+            type="file"
+            accept="audio/*,.webm,.mp4,.m4a,.mp3,.wav,.ogg"
+            style={{ display: 'none' }}
+            onChange={onAudioFileSelected}
+          />
+
           <textarea
             value={speechText}
             onChange={e => setSpeechText(e.target.value)}
             placeholder="Aquí aparecerá la transcripción..."
+            disabled={speechLoading}
             style={{
               width: '100%',
               minHeight: '96px',
@@ -1425,16 +1495,38 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             }}
           />
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '12px', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => audioFileInputRef.current?.click()}
+              disabled={speechListening || speechLoading}
+              title="Subir un archivo de audio para transcribirlo"
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: '1px solid #E4DCF4',
+                backgroundColor: speechListening || speechLoading ? '#F8F6FC' : '#F0EBF8',
+                color: speechListening || speechLoading ? '#D8D0EC' : '#8070C8',
+                cursor: speechListening || speechLoading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '0.85rem',
+              }}
+            >
+              📁 Subir audio
+            </button>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', flexWrap: 'wrap' }}>
             <button
               onClick={closeSpeechBox}
+              disabled={speechLoading}
               style={{
                 padding: '8px 14px',
                 borderRadius: '10px',
                 border: '1px solid #E4DCF4',
                 backgroundColor: 'transparent',
-                color: '#B0A0C0',
-                cursor: 'pointer',
+                color: speechLoading ? '#D8D0EC' : '#B0A0C0',
+                cursor: speechLoading ? 'not-allowed' : 'pointer',
               }}
             >
               Cerrar
@@ -1443,39 +1535,41 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             <button
               onClick={() => {
                 setSpeechText('');
+                setSpeechAudioName('');
                 finalTranscriptRef.current = '';
                 interimTranscriptRef.current = '';
               }}
-              disabled={!speechText.trim()}
+              disabled={!speechText.trim() || speechLoading}
               style={{
                 padding: '8px 14px',
                 borderRadius: '10px',
                 border: '1px solid #E4DCF4',
                 backgroundColor: 'transparent',
-                color: speechText.trim() ? '#C04060' : '#D8D0EC',
-                cursor: speechText.trim() ? 'pointer' : 'not-allowed',
+                color: speechText.trim() && !speechLoading ? '#C04060' : '#D8D0EC',
+                cursor: speechText.trim() && !speechLoading ? 'pointer' : 'not-allowed',
               }}
             >
               Limpiar
             </button>
 
-            {/* Reanudar — solo visible cuando el mic está detenido */}
-            {!speechListening && (
+            {!speechListening && !speechLoading && (
               <button
                 onClick={reanudarEscucha}
+                disabled={!speechSupported}
+                title="Continuar dictando con el micrófono"
                 style={{
                   padding: '8px 14px',
                   borderRadius: '10px',
                   border: 'none',
-                  backgroundColor: '#8070C8',
+                  backgroundColor: speechSupported ? '#8070C8' : '#D8D0EC',
                   color: '#FFFFFF',
-                  cursor: 'pointer',
+                  cursor: speechSupported ? 'pointer' : 'not-allowed',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
                 }}
               >
-                🎙️ Reanudar
+                🎙️ Reanudar micrófono
               </button>
             )}
 
@@ -1496,18 +1590,19 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
             <button
               onClick={insertSpeechText}
-              disabled={!speechText.trim()}
+              disabled={!speechText.trim() || speechLoading}
               style={{
                 padding: '8px 14px',
                 borderRadius: '10px',
                 border: 'none',
-                backgroundColor: speechText.trim() ? '#8070C8' : '#D8D0EC',
+                backgroundColor: speechText.trim() && !speechLoading ? '#8070C8' : '#D8D0EC',
                 color: '#FFFFFF',
-                cursor: speechText.trim() ? 'pointer' : 'not-allowed',
+                cursor: speechText.trim() && !speechLoading ? 'pointer' : 'not-allowed',
               }}
             >
               Insertar en canvas
             </button>
+            </div>
           </div>
         </div>
       )}
