@@ -8,7 +8,7 @@ RUN npm ci
 COPY . .
 
 # Pasar la URL del backend en tiempo de build
-ARG VITE_API_URL=http://localhost:3000/api
+ARG VITE_API_URL
 ENV VITE_API_URL=$VITE_API_URL
 
 RUN npm run build

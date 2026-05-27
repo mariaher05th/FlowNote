@@ -26,7 +26,7 @@ services:
     environment:
       MONGODB_URI: mongodb://db:27017/flownote
       PORT: 3000
-      JWT_SECRET: flownote_secret_2024
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 7d
     ports:
       - "3000:3000"
