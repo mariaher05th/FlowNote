@@ -62,8 +62,9 @@ class CollaborationService {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 15,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
     });
 
     this.socket.on('connect', () => {
@@ -79,9 +80,7 @@ class CollaborationService {
     this.socket.on(COLLAB_EVENTS.connected, () => {
       this.authReady = true;
       this.flushAuthWaiters();
-      if (this.activeRoom) {
-        this.joinRoom(this.activeRoom.roomType, this.activeRoom.roomId).catch(() => {});
-      }
+      // El hook de useCollaboration maneja el rejoin vía onServerConnected
     });
 
     this.socket.on('connect_error', () => {
@@ -324,6 +323,11 @@ class CollaborationService {
   ) {
     if (!this.isRoomJoined()) return;
     this.connect().emit('drawing_update', { roomType, roomId, mode, payload });
+  }
+
+  boardCursorMove(roomType: RoomType, roomId: string, x: number, y: number, typing = false) {
+    if (!this.isRoomJoined() || !this.socket) return;
+    this.socket.emit('board_cursor', { roomType, roomId, x, y, typing });
   }
 
   on(event: string, handler: (...args: unknown[]) => void) {
