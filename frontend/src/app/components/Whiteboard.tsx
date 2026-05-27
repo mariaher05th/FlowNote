@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';  
 import api from '../../services/api';
 import { useCollaboration } from '../../hooks/useCollaboration';
 import { CollaborationBar } from './CollaborationBar';
+import { StructuredBoard } from './StructuredBoard';
 
 // ── Tipos ──────────────────────────────────────────────
 type Tool = 'select' | 'pen' | 'eraser' | 'note' | 'task' | 'text';
@@ -21,7 +22,7 @@ interface Stroke {
   points: { x: number; y: number }[];
 }
 
-interface Colaborador { usuario_id: string; username: string; nombre: string; rol: string; }
+interface Colaborador { usuario_id: string; username: string; nombre: string; rol: string; }  
 
 const noteColors    = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 const penColors     = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
@@ -62,8 +63,8 @@ function ToolBtn({ active, onClick, title, children, wide }: { active?: boolean;
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px',
       boxShadow: active ? '0 2px 8px rgba(128,112,200,0.35)' : 'none',
     }}
-    onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'; }}
-    onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.backgroundColor = 'var(--highlight-bg)'; }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.backgroundColor = 'transparent'; }}
     >{children}</button>
   );
 }
@@ -79,16 +80,45 @@ function Modal({ onClose, children }: { onClose: () => void; children: React.Rea
   );
 }
 
+//para la superposición
+function encontrarPosicionLibre(
+  item: CanvasItem,
+  otrosItems: CanvasItem[],
+  margen = 12
+): { x: number; y: number } {
+  const PASO = 20;
+  let x = item.x;
+  let y = item.y;
+
+  const hayColision = (nx: number, ny: number) =>
+    otrosItems.some(otro =>
+      !(nx + item.width + margen <= otro.x ||
+        nx >= otro.x + otro.width + margen ||
+        ny + item.height + margen <= otro.y ||
+        ny >= otro.y + otro.height + margen)
+    );
+
+  for (let intento = 0; intento < 50; intento++) {
+    if (!hayColision(x, y)) return { x, y };
+    x += PASO;
+    if (x > item.x + 200) { x = item.x; y += PASO; }
+  }
+
+  const maxY = Math.max(...otrosItems.map(i => i.y + i.height), 0);
+  return { x: item.x, y: maxY + margen };
+}
+
+
 // ── Componente principal ────────────────────────────────
 export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?: () => void }) {
-  const canvasRef     = useRef<HTMLCanvasElement>(null);
-  const containerRef  = useRef<HTMLDivElement>(null);
-  const saveTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const collabTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isLoaded      = useRef(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const collabTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLoaded = useRef(false);
   const remoteApplying = useRef(false);
-  const itemsRef      = useRef<CanvasItem[]>([]);
-  const strokesRef    = useRef<Stroke[]>([]);
+  const itemsRef = useRef<CanvasItem[]>([]);
+  const strokesRef = useRef<Stroke[]>([]);
   const currentStroke = useRef<Stroke | null>(null);
 
   const recognitionRef = useRef<any>(null);
@@ -99,27 +129,27 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const puedeEditarRef   = useRef(false);   // tracks puedeEditar for use in cleanup
 
   // Estado de la nota
-  const [noteTitle,      setNoteTitle]      = useState('');
+  const [noteTitle, setNoteTitle] = useState('');
   const [esColaborativa, setEsColaborativa] = useState(false);
-  const [colaboradores,  setColaboradores]  = useState<Colaborador[]>([]);
-  const [miRol,          setMiRol]          = useState<string>('admin');
-  const [esInvitado,     setEsInvitado]     = useState(false);
+  const [colaboradores, setColaboradores] = useState<Colaborador[]>([]);
+  const [miRol, setMiRol] = useState<string>('admin');
+  const [esInvitado, setEsInvitado] = useState(false);
 
   // Estado del tablero
-  const [tool,       setTool]       = useState<Tool>('select');
-  const [items,      setItems]      = useState<CanvasItem[]>([]);
+  const [tool, setTool] = useState<Tool>('select');
+  const [items, setItems] = useState<CanvasItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [dragging,   setDragging]   = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
-  const [resizing,   setResizing]   = useState<{ id: string; handle: string; startX: number; startY: number; startItem: CanvasItem } | null>(null);
-  const [drawing,    setDrawing]    = useState(false);
-  const [canvasVer,  setCanvasVer]  = useState(0);
-  const [penColor,   setPenColor]   = useState('#8070C8');
-  const [penSize,    setPenSize]    = useState(3);
+  const [dragging, setDragging] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [resizing, setResizing] = useState<{ id: string; handle: string; startX: number; startY: number; startItem: CanvasItem } | null>(null);
+  const [drawing, setDrawing] = useState(false);
+  const [canvasVer, setCanvasVer] = useState(0);
+  const [penColor, setPenColor] = useState('#8070C8');
+  const [penSize, setPenSize] = useState(3);
   const [eraserSize, setEraserSize] = useState(24);
-  const [editingId,  setEditingId]  = useState<string | null>(null);
-  const [editText,   setEditText]   = useState('');
-  const [guardando,  setGuardando]  = useState(false);
-  const [guardado,   setGuardado]   = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
 
   const [speechOpen, setSpeechOpen] = useState(false);
   const [speechListening, setSpeechListening] = useState(false);
@@ -138,29 +168,39 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const prevPresenciaLen = useRef(0);
   const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
 
+  const [boardMode, setBoardMode] = useState<'libre' | 'organizado'>('libre');
+  const [drawOnOrganized, setDrawOnOrganized] = useState(false);
+
+  // Cuando el canvas monta en modo organizado, redibuja los trazos existentes
+  useEffect(() => {
+    if (drawOnOrganized) replayStrokes(strokesRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawOnOrganized]);
+  const [noteReminders, setNoteReminders] = useState<any[]>([]);
+
   // Modales
-  const [taskModal,     setTaskModal]     = useState(false);
-  const [taskTitulo,    setTaskTitulo]    = useState('');
-  const [taskEstado,    setTaskEstado]    = useState<'pendiente' | 'en_proceso' | 'finalizada'>('pendiente');
-  const [taskAsignado,  setTaskAsignado]  = useState('');
-  const [reminderModal, setReminderModal]   = useState(false);
-  const [remTitulo,     setRemTitulo]       = useState('');
-  const [remDesc,       setRemDesc]         = useState('');
-  const [remFecha,      setRemFecha]        = useState('');
-  const [remHora,       setRemHora]         = useState('09:00');
-  const [remCreando,    setRemCreando]      = useState(false);
-  const [remExito,      setRemExito]        = useState(false);
+  const [taskModal, setTaskModal] = useState(false);
+  const [taskTitulo, setTaskTitulo] = useState('');
+  const [taskEstado, setTaskEstado] = useState<'pendiente' | 'en_proceso' | 'finalizada'>('pendiente');
+  const [taskAsignado, setTaskAsignado] = useState('');
+  const [reminderModal, setReminderModal] = useState(false);
+  const [remTitulo, setRemTitulo] = useState('');
+  const [remDesc, setRemDesc] = useState('');
+  const [remFecha, setRemFecha] = useState('');
+  const [remHora, setRemHora] = useState('09:00');
+  const [remCreando, setRemCreando] = useState(false);
+  const [remExito, setRemExito] = useState(false);
   const [addCollabModal, setAddCollabModal] = useState(false);
   const [collabBusqueda, setCollabBusqueda] = useState('');
   const [collabResultados, setCollabResultados] = useState<any[]>([]);
   const [collabBuscando, setCollabBuscando] = useState(false);
   const collabDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [completarConfirm, setCompletarConfirm] = useState(false);
-  const [noteEstado,    setNoteEstado]      = useState('pendiente');
-  const [tooltip,       setTooltip]         = useState<{ text: string; x: number; y: number } | null>(null);
-  const [exportMenu,    setExportMenu]      = useState(false);
+  const [noteEstado, setNoteEstado] = useState('pendiente');
+  const [tooltip, setTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  const [exportMenu, setExportMenu] = useState(false);
   const exportBtnRef = useRef<HTMLDivElement>(null);
-  const [exportPos,   setExportPos]     = useState({ top: 0, left: 0 });
+  const [exportPos, setExportPos] = useState({ top: 0, left: 0 });
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const miUserId = String(user.id || user._id || '');
@@ -336,6 +376,12 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       } catch { setItems([]); }
       isLoaded.current = true;
     }).catch(() => { setItems([]); isLoaded.current = true; });
+
+    // Cargar recordatorios de esta nota
+    api.get(`/reminders/nota/${noteId}`)
+      .then(res => setNoteReminders(res.data))
+      .catch(() => setNoteReminders([]));
+
   }, [noteId]);
 
   useEffect(() => { itemsRef.current = items; }, [items]);
@@ -450,7 +496,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       const nuevoEstado = calcularEstadoNota(items);
       await api.put(`/notes/${noteId}`, {
         contenido: buildContenido(items),
-        estado: nuevoEstado,  });
+        estado: nuevoEstado,
+      });
       setNoteEstado(nuevoEstado);
       setGuardado(true);
       setTimeout(() => setGuardado(false), 2000);
@@ -476,7 +523,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     clearLockRenew();
     lockRenewRef.current = setInterval(() => {
       if (noteId && iHaveLock(resourceType, resourceId)) {
-        acquireResourceLock(resourceType, resourceId).catch(() => {});
+        acquireResourceLock(resourceType, resourceId).catch(() => { });
       }
     }, 12_000);
   };
@@ -632,7 +679,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         } else if (res.reason === 'denied') {
           setLockMsg(`${res.holderName ?? 'Otro usuario'} está editando este elemento`);
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   };
 
@@ -663,9 +710,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       setItems(prev => prev.map(i => {
         if (i.id !== resizing.id) return i;
         let { x, y, width, height } = si;
-        if (handle.includes('e')) width  = Math.max(MIN, si.width  + dx);
+        if (handle.includes('e')) width = Math.max(MIN, si.width + dx);
         if (handle.includes('s')) height = Math.max(MIN, si.height + dy);
-        if (handle.includes('w')) { width  = Math.max(MIN, si.width  - dx); x = si.x + si.width  - width; }
+        if (handle.includes('w')) { width = Math.max(MIN, si.width - dx); x = si.x + si.width - width; }
         if (handle.includes('n')) { height = Math.max(MIN, si.height - dy); y = si.y + si.height - height; }
         return { ...i, x, y, width, height };
       }));
@@ -677,15 +724,47 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   };
 
   const stopDrag = () => {
-    if (draggingItemId.current && noteId && collabRoomReady) {
-      releaseResourceLock('board', draggingItemId.current);
-      draggingItemId.current = null;
-      clearLockRenew();
+  if (dragging) {
+    const itemActual = itemsRef.current.find(i => i.id === dragging.id);
+    if (itemActual) {
+      const colisiona = itemsRef.current.some(otro => {
+        if (otro.id === itemActual.id) return false;
+        return !(
+          itemActual.x + itemActual.width <= otro.x ||
+          itemActual.x >= otro.x + otro.width ||
+          itemActual.y + itemActual.height <= otro.y ||
+          itemActual.y >= otro.y + otro.height
+        );
+      });
+
+      if (colisiona) {
+        const posLibre = encontrarPosicionLibre(
+          itemActual,
+          itemsRef.current.filter(i => i.id !== itemActual.id)
+        );
+        setItems(prev => prev.map(i =>
+          i.id === itemActual.id ? { ...i, x: posLibre.x, y: posLibre.y } : i
+        ));
+      }
     }
-    setDragging(null);
-    setResizing(null);
-  };
+  }
+
+  if (draggingItemId.current && noteId && collabRoomReady) {
+    releaseResourceLock('board', draggingItemId.current);
+    draggingItemId.current = null;
+    clearLockRenew();
+  }
+  setDragging(null);
+  setResizing(null);
+};
   const deleteItem = (id: string) => { setItems(prev => prev.filter(i => i.id !== id)); setSelectedId(null); };
+
+  const clearCanvas = () => {
+    strokesRef.current = [];
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    setCanvasVer(v => v + 1);
+  };
 
   const cycleStatus = (id: string) => {
     const cycle: CanvasItem['status'][] = ['pendiente', 'en_proceso', 'finalizada'];
@@ -710,9 +789,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   // ── Crear tarea ──
   const crearTarea = () => {
     if (!taskTitulo.trim()) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const x = rect ? rect.width / 2 - 120 : 100;
-    const y = rect ? rect.height / 2 - 50 : 100;
+    const { x, y } = findFreePos(240, 90);
     const newTask: CanvasItem = {
       id: Date.now().toString(),
       type: 'task', x, y,
@@ -769,7 +846,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       });
       setColaboradores(prev => [...prev, { usuario_id: String(u._id), username: u.username, nombre: `${u.nombre} ${u.apellido || ''}`.trim(), rol }]);
       setCollabResultados([]); setCollabBusqueda('');
-    } catch {}
+    } catch { }
   };
 
   const completarNota = async () => {
@@ -778,7 +855,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       await api.put(`/notes/${noteId}`, { estado: noteEstado === 'completado' ? 'pendiente' : 'completado' });
       setNoteEstado(prev => prev === 'completado' ? 'pendiente' : 'completado');
       setCompletarConfirm(false);
-    } catch {}
+    } catch { }
   };
 
   // Colores de rol
@@ -825,15 +902,35 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
   // Posición central del canvas para nuevos items
-  const centroCanvas = (w = 220, h = 100) => {
+  const findFreePos = (w: number, h: number) => {
     const r = containerRef.current?.getBoundingClientRect();
-    return { x: r ? r.width / 2 - w / 2 : 150, y: r ? r.height / 2 - h / 2 : 150 };
+    const cw = r?.width ?? 800;
+    const ch = r?.height ?? 600;
+    const M = 18; // margin between items
+    const cx = Math.max(M, (cw - w) / 2);
+    const cy = Math.max(M, (ch - h) / 2);
+    const overlaps = (x: number, y: number) =>
+      itemsRef.current.some(it =>
+        x < it.x + it.width + M && x + w + M > it.x &&
+        y < it.y + it.height + M && y + h + M > it.y,
+      );
+    if (!overlaps(cx, cy)) return { x: cx, y: cy };
+    for (let radius = 40; radius < 600; radius += 36) {
+      for (let a = 0; a < 12; a++) {
+        const angle = (a / 12) * Math.PI * 2;
+        const tx = Math.max(M, Math.min(cw - w - M, cx + Math.cos(angle) * radius));
+        const ty = Math.max(M, Math.min(ch - h - M, cy + Math.sin(angle) * radius));
+        if (!overlaps(tx, ty)) return { x: tx, y: ty };
+      }
+    }
+    const n = itemsRef.current.length;
+    return { x: M + (n % 5) * (w + M), y: M + Math.floor(n / 5) * (h + M) };
   };
 
   // Busca el colaborador que más se acerca al texto hablado (username o nombre)
   // Si no hay coincidencia o no es nota colaborativa → se lo asigna al usuario actual
   const resolverAsignado = (hablado: string): { username: string; nombre: string } => {
-    const s      = norm(hablado);
+    const s = norm(hablado);
     const sJunto = s.replace(/\s+/g, ''); // "Mari 05 th" → "mari05th"
     const candidatos = esColaborativa ? colaboradores.filter(
       (c: any) => !c.invitacion || c.invitacion === 'aceptada',
@@ -875,7 +972,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     // "crea una nota rapida", "anota que...", "nota rapida de...", etc.
     if (/\b(nota\s+rapida|anota(?:r)?|crea(?:r)?\s+(?:una?\s+)?nota|agrega(?:r)?\s+(?:una?\s+)?nota|escribe?\s+(?:una?\s+)?nota)\b/.test(t)) {
       const contenido = tras(/.*?\b(?:nota\s+rapida\s*(?:de\s+|sobre\s+|con\s+)?|anota(?:r)?\s*(?:que\s+)?|crea(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+|que\s+diga\s+)?|agrega(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+)?|escribe?\s+(?:una?\s+)?nota\s*(?:que\s+diga\s+)?)/);
-      const { x, y } = centroCanvas(200, 140);
+      const { x, y } = findFreePos(200, 140);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140, content: contenido || '...', color: '#FFF8E7' }]);
       setComandoFeedback({ ok: true, msg: contenido ? `📝 Nota: "${contenido}"` : '📝 Nota creada' });
       setTool('select');
@@ -887,16 +984,16 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     // Captura TODO lo que viene después de "a/para" (puede ser varias palabras)
     // Usa lastIndexOf para encontrar el último "a" / "para" como separador
     if (/\b(asigna(?:r)?|crea(?:r)?|agrega(?:r)?)\b.*\btarea\b/.test(t)) {
-      const lastA    = t.lastIndexOf(' a ');
+      const lastA = t.lastIndexOf(' a ');
       const lastPara = t.lastIndexOf(' para ');
       const splitPos = Math.max(lastA, lastPara);
       if (splitPos !== -1) {
-        const sepLen   = splitPos === lastPara ? 6 : 3; // " para " = 6, " a " = 3
+        const sepLen = splitPos === lastPara ? 6 : 3; // " para " = 6, " a " = 3
         const antesAsig = t.slice(0, splitPos);
-        const hablado   = t.slice(splitPos + sepLen).replace(/^@/, '').trim();
-        const titulo    = antesAsig.replace(/.*?\btarea\s*(?:de\s+|la\s+|una?\s+)?/, '').trim() || 'Nueva tarea';
+        const hablado = t.slice(splitPos + sepLen).replace(/^@/, '').trim();
+        const titulo = antesAsig.replace(/.*?\btarea\s*(?:de\s+|la\s+|una?\s+)?/, '').trim() || 'Nueva tarea';
         const { username, nombre } = resolverAsignado(hablado);
-        const { x, y } = centroCanvas(240, 90);
+        const { x, y } = findFreePos(240, 90);
         setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', asignadoA: username, color: '' }]);
         setComandoFeedback({ ok: true, msg: `✅ Tarea "${titulo}" → ${nombre} (@${username})` });
         setTool('select');
@@ -908,7 +1005,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     // "crea una tarea de compras", "necesito hacer...", "pendiente:..."
     if (/\b(crea(?:r)?\s+(?:una?\s+)?tarea|agrega(?:r)?\s+(?:una?\s+)?tarea|necesito\s+(?:hacer|recordar)|pendiente:|tarea:)\b/.test(t)) {
       const titulo = tras(/.*?\b(?:crea(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|agrega(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|necesito\s+(?:hacer|recordar)\s+|pendiente:\s*|tarea:\s*)/) || 'Nueva tarea';
-      const { x, y } = centroCanvas(240, 90);
+      const { x, y } = findFreePos(240, 90);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', color: '' }]);
       setComandoFeedback({ ok: true, msg: `✅ Tarea: "${titulo}"` });
       setTool('select');
@@ -921,7 +1018,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (mRec) {
       const titulo = mRec[1].replace(/^(?:de|que|para)\s+/, '').trim();
       const fecha = parsearDia(mRec[2]);
-      const hora  = parsearHora(mRec[3]);
+      const hora = parsearHora(mRec[3]);
       try {
         await api.post('/reminders', { nota_id: noteId || '', mensaje: titulo || 'Recordatorio', fecha_hora: new Date(`${fecha}T${hora}:00`).toISOString() });
         setComandoFeedback({ ok: true, msg: `🔔 "${titulo || 'Recordatorio'}" · ${mRec[2]} ${hora}` });
@@ -935,7 +1032,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (/\b(escribe?\s+(?:en\s+el\s+tablero|texto)|agrega(?:r)?\s+(?:un\s+)?texto|pon(?:er)?\s+(?:el\s+)?texto)\b/.test(t)) {
       const contenido = tras(/.*?\b(?:escribe?\s+(?:en\s+el\s+tablero\s+|texto\s+)?|agrega(?:r)?\s+(?:un\s+)?texto\s*(?:que\s+diga\s+)?|pon(?:er)?\s+(?:el\s+)?texto\s*)/);
       if (!contenido) return false;
-      const { x, y } = centroCanvas(200, 50);
+      const { x, y } = findFreePos(200, 50);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'text', x, y, width: 220, height: 50, content: contenido, color: 'transparent' }]);
       setComandoFeedback({ ok: true, msg: `💬 Texto: "${contenido}"` });
       setTool('select');
@@ -1180,10 +1277,10 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       <style>body{font-family:system-ui,sans-serif;margin:0;padding:24px;color:#2F2840} h1{font-weight:300;color:#8070C8;margin-bottom:4px} .section{margin-top:20px} h3{font-size:14px;color:#B0A0C0;font-weight:500;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px} img{max-width:100%;border-radius:8px;border:1px solid #eee} @media print{body{padding:0}}</style>
     </head><body>
       <h1>${noteTitle || 'Tablero'}</h1>
-      <p style="color:#B0A0C0;font-size:13px;margin:0 0 16px">Exportado el ${new Date().toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' })}</p>
+      <p style="color:#B0A0C0;font-size:13px;margin:0 0 16px">Exportado el ${new Date().toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
       ${imgData ? `<div class="section"><h3>Dibujo</h3><img src="${imgData}" /></div>` : ''}
       ${tareasHTML ? `<div class="section"><h3>Tareas</h3>${tareasHTML}</div>` : ''}
-      ${notasHTML  ? `<div class="section"><h3>Notas</h3>${notasHTML}</div>` : ''}
+      ${notasHTML ? `<div class="section"><h3>Notas</h3>${notasHTML}</div>` : ''}
       <script>window.onload=()=>{window.print()}</script>
     </body></html>`;
     const blob = new Blob([html], { type: 'text/html' });
@@ -1194,7 +1291,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   // ── Estado de tarea colores ──
   const statusColors: Record<string, { bg: string; color: string }> = {
-    pendiente:  { bg: '#FEF3C7', color: '#92400E' },
+    pendiente: { bg: '#FEF3C7', color: '#92400E' },
     en_proceso: { bg: '#EDE9FE', color: '#5B21B6' },
     finalizada: { bg: '#D1FAE5', color: '#065F46' },
   };
@@ -1253,8 +1350,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         <SectionLabel>Dibujo</SectionLabel>
         <div style={{ display: 'flex', gap: '2px', backgroundColor: 'var(--app-bg)', borderRadius: '10px', padding: '3px' }}>
           <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Seleccionar">↖</ToolBtn>
-          <ToolBtn active={tool === 'pen'}    onClick={() => setTool('pen')}    title="Lápiz">✏️</ToolBtn>
-          <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Borrar">⬜</ToolBtn>
+          <ToolBtn active={tool === 'pen'} onClick={() => { setTool('pen'); if (boardMode === 'organizado') setDrawOnOrganized(true); }} title="Lápiz">✏️</ToolBtn>
+          <ToolBtn active={tool === 'eraser'} onClick={() => { setTool('eraser'); if (boardMode === 'organizado') setDrawOnOrganized(true); }} title="Borrar">⬜</ToolBtn>
+          <ToolBtn active={false} onClick={clearCanvas} title="Limpiar lienzo">🗑️</ToolBtn>
         </div>
 
         {tool === 'pen' && (
@@ -1328,6 +1426,34 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             🎙️
           </span>
         </ToolBtn>
+
+
+        {/* Switch Tablero */}
+        <Sep />
+        <div style={{
+          display: 'flex',
+          backgroundColor: 'var(--app-bg)',
+          borderRadius: '10px',
+          padding: '3px',
+          gap: '2px'
+        }}>
+          <ToolBtn
+            active={boardMode === 'libre'}
+            onClick={() => { setBoardMode('libre'); setDrawOnOrganized(false); setTool('select'); }}
+            title="Tablero libre"
+          >
+            <span style={{ fontSize: '0.72rem', fontWeight: 500 }}>Libre</span>
+          </ToolBtn>
+          <ToolBtn
+            active={boardMode === 'organizado'}
+            onClick={() => { setBoardMode('organizado'); setDrawOnOrganized(false); setTool('select'); }}
+            title="Tablero organizado"
+          >
+            <span style={{ fontSize: '0.72rem', fontWeight: 500 }}>Organizado</span>
+          </ToolBtn>
+        </div>
+
+        <Sep />
 
         {/* Exportar */}
         <div ref={exportBtnRef}>
@@ -1412,9 +1538,46 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         )}
       </div>
 
-      {/* ── CANVAS ── */}
+      <style>{`@keyframes sbFadeIn { from { opacity: 0; transform: scale(0.987); } to { opacity: 1; transform: scale(1); } }`}</style>
+
+      {/* ── MODO ORGANIZADO sin dibujo: solo las zonas ── */}
+      {boardMode === 'organizado' && !drawOnOrganized && (
+        <div style={{ flex: 1, overflow: 'hidden', animation: 'sbFadeIn 0.22s ease' }}>
+          <StructuredBoard
+            items={items}
+            reminders={noteReminders}
+            puedeEditar={puedeEditar}
+            isDrawing={false}
+            onUpdateItem={(id, changes) =>
+              setItems(prev => prev.map(i => i.id === id ? { ...i, ...changes } : i))
+            }
+            onDeleteItem={(id) => {
+              setItems(prev => prev.filter(i => i.id !== id));
+              setSelectedId(null);
+            }}
+            onAddItem={(item) =>
+              setItems(prev => [...prev, { ...item, id: Date.now().toString() }])
+            }
+          />
+        </div>
+      )}
+
+      {/* ── CANVAS: siempre en modo libre, o en modo organizado+dibujo ── */}
+      {(boardMode === 'libre' || drawOnOrganized) && (
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: tool === 'pen' || tool === 'eraser' ? 'crosshair' : 'default' }}
         onClick={handleCanvasClick} onMouseMove={onMouseMove} onMouseUp={stopDrag}>
+
+        {/* Barra de retorno al tablero organizado */}
+        {drawOnOrganized && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 14px', backgroundColor: 'rgba(246,244,251,0.96)', borderBottom: '1.5px solid #C8B8F0', backdropFilter: 'blur(6px)' }}>
+            <button
+              onClick={() => { setDrawOnOrganized(false); setTool('select'); }}
+              style={{ padding: '4px 16px', borderRadius: '10px', border: '1.5px solid #C8B8F0', backgroundColor: '#FFFFFF', color: '#8070C8', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
+            >
+              ← Volver al tablero organizado
+            </button>
+          </div>
+        )}
 
         {/* Fondo punteado */}
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
@@ -1431,8 +1594,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           }}
           onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw} />
 
-        {/* Items */}
-        {items.map(item => (
+        {/* Items — solo modo libre */}
+        {boardMode === 'libre' && items.map(item => (
           <div key={item.id} style={{ position: 'absolute', left: item.x, top: item.y, width: item.width, height: item.height, cursor: tool === 'select' ? (dragging?.id === item.id ? 'grabbing' : 'grab') : 'default', userSelect: 'none' }} onMouseDown={e => startDrag(e, item.id)}>
 
             {/* Sticky note */}
@@ -1482,9 +1645,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             {/* Handles resize */}
             {selectedId === item.id && tool === 'select' && (
               [{ h: 'nw', top: -5, left: -5, cursor: 'nwse-resize' }, { h: 'n', top: -5, left: item.width / 2 - 5, cursor: 'ns-resize' }, { h: 'ne', top: -5, left: item.width - 5, cursor: 'nesw-resize' }, { h: 'e', top: item.height / 2 - 5, left: item.width - 5, cursor: 'ew-resize' }, { h: 'se', top: item.height - 5, left: item.width - 5, cursor: 'nwse-resize' }, { h: 's', top: item.height - 5, left: item.width / 2 - 5, cursor: 'ns-resize' }, { h: 'sw', top: item.height - 5, left: -5, cursor: 'nesw-resize' }, { h: 'w', top: item.height / 2 - 5, left: -5, cursor: 'ew-resize' }]
-              .map(({ h, top, left, cursor }) => (
-                <div key={h} onMouseDown={e => startResizeHandle(e, item.id, h)} style={{ position: 'absolute', top, left, width: 10, height: 10, borderRadius: '2px', backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8', cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
-              ))
+                .map(({ h, top, left, cursor }) => (
+                  <div key={h} onMouseDown={e => startResizeHandle(e, item.id, h)} style={{ position: 'absolute', top, left, width: 10, height: 10, borderRadius: '2px', backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8', cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
+                ))
             )}
           </div>
         ))}
@@ -1573,6 +1736,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           </div>
         ))}
       </div>
+      )}
 
       {/* ── SPEECH TO TEXT ── */}
       {speechOpen && (
@@ -1875,7 +2039,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         const tareasSinAsignar = items.filter(i => i.type === 'task' && !i.asignadoA);
         const closePanel = () => { setAddCollabModal(false); setCollabBusqueda(''); setCollabResultados([]); };
         const taskDot: Record<string, { bg: string; border: string; icon: string }> = {
-          pendiente:  { bg: '#FEF3C7', border: '#F59E0B', icon: '○' },
+          pendiente: { bg: '#FEF3C7', border: '#F59E0B', icon: '○' },
           en_proceso: { bg: '#EDE9FE', border: '#8070C8', icon: '◑' },
           finalizada: { bg: '#D1FAE5', border: '#059669', icon: '●' },
         };
@@ -1898,9 +2062,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
               {/* Body — scrollable */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '1.25rem 1.5rem' }}>
                 {miembrosActivos.map(c => {
-                  const colBg     = c.rol === 'admin' ? '#EDE9FE' : c.rol === 'editor' ? '#F9E8F3' : '#E8EFF9';
+                  const colBg = c.rol === 'admin' ? '#EDE9FE' : c.rol === 'editor' ? '#F9E8F3' : '#E8EFF9';
                   const colBorder = c.rol === 'admin' ? '#8070C8' : c.rol === 'editor' ? '#C070A0' : '#7090B8';
-                  const rolName   = c.rol === 'admin' ? 'Administrador' : c.rol === 'editor' ? 'Editor' : 'Revisor';
+                  const rolName = c.rol === 'admin' ? 'Administrador' : c.rol === 'editor' ? 'Editor' : 'Revisor';
                   const esYo = c.username === user.username;
                   const tareas = items.filter(i => i.type === 'task' && i.asignadoA === c.username);
                   return (

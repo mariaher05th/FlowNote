@@ -30,3 +30,4 @@ If you're not using docker, look for Frontend and Backend setup.
 - María José Hernández
 - Paulina Valencia
 - Daniel Gomez
+- Vivian Buelvas
