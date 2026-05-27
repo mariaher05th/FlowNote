@@ -71,4 +71,6 @@ export const COLLABORATION_EVENTS = {
   // Flujo y widgets
   flow_updated: 'flow_updated',
   widget_updated: 'widget_updated',
+  // Cursor de tablero
+  board_cursor: 'board_cursor',
 } as const;

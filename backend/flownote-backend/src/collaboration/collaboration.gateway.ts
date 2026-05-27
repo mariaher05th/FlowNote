@@ -368,6 +368,27 @@ export class CollaborationGateway
     );
   }
 
+  @SubscribeMessage('board_cursor')
+  boardCursor(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { roomType?: string; roomId?: string; x?: number; y?: number; typing?: boolean },
+  ) {
+    const roomType = body?.roomType;
+    const roomId = body?.roomId ? String(body.roomId) : '';
+    if ((roomType !== 'nota' && roomType !== 'espacio') || !roomId) return;
+    const user = this.roomService.getUser(client);
+    const ref: RoomRef = { roomType, roomId };
+    const room = this.roomService.roomKey(ref);
+    if (!this.roomService.assertInRoom(client, room)) return;
+    this.roomService.broadcast(
+      this.server,
+      client,
+      room,
+      COLLABORATION_EVENTS.board_cursor,
+      this.roomService.envelope(user, { x: body.x ?? 0, y: body.y ?? 0, typing: body.typing ?? false }),
+    );
+  }
+
   @SubscribeMessage('presence_ping')
   async presencePing(@ConnectedSocket() client: Socket, @MessageBody() body: RoomBodyDto) {
     const room = this.roomService.roomKey(body);

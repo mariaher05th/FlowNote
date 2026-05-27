@@ -15,7 +15,7 @@ export interface UseCollaborationOptions {
   onRemoteNoteUpdate?: (field: string, value: unknown, fromUserId: string) => void;
   onRemoteDrawing?: (mode: string, payload: Record<string, unknown>, fromUserId: string) => void;
   onRemoteComment?: (action: 'add' | 'update' | 'delete', data: Record<string, unknown>, fromUserId: string) => void;
-  onRemoteCursor?: (x: number, y: number, userId: string, nombre: string) => void;
+  onRemoteCursor?: (x: number, y: number, userId: string, nombre: string, typing: boolean) => void;
 }
 
 function normId(id?: string | null): string {
@@ -177,9 +177,10 @@ export function useCollaboration({
         commentCb.current?.(action, data, userId ?? '');
       };
 
-    const onBoardCursor = (msg: { userId?: string; nombre?: string; x?: number; y?: number }) => {
+    const onBoardCursor = (msg: { userId?: string; nombre?: string; x?: number; y?: number; typing?: boolean }) => {
+      console.log('[COLLAB] onBoardCursor raw', msg);
       if (isSelf(msg.userId)) return;
-      cursorCb.current?.(msg.x ?? 0, msg.y ?? 0, msg.userId ?? '', msg.nombre ?? '');
+      cursorCb.current?.(msg.x ?? 0, msg.y ?? 0, msg.userId ?? '', msg.nombre ?? '', msg.typing ?? false);
     };
 
     const onLockAcquired = (raw: Record<string, unknown>) => upsertLock(raw);
@@ -235,8 +236,28 @@ export function useCollaboration({
       }
     }, 2000);
 
+    // Recuperar cuando el tab vuelve del background (Chrome congela WS en tabs ocultas)
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (!socket.connected) {
+        socket.connect();
+      } else if (collaborationService.isAuthReady() && !collaborationService.isRoomJoined()) {
+        doJoinRoom();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    // Health check: si el socket está conectado pero no está en sala, reintentar unirse
+    const healthInterval = setInterval(() => {
+      if (socket.connected && collaborationService.isAuthReady() && !collaborationService.isRoomJoined()) {
+        doJoinRoom();
+      }
+    }, 20_000);
+
     return () => {
       clearTimeout(authFallback);
+      clearInterval(healthInterval);
+      document.removeEventListener('visibilitychange', onVisible);
       collaborationService.leaveRoom(roomType, roomId).catch(() => {});
       setRoomReady(false);
       setJoinError(null);
@@ -274,9 +295,9 @@ export function useCollaboration({
   );
 
   const broadcastCursor = useCallback(
-    (x: number, y: number) => {
+    (x: number, y: number, typing = false) => {
       if (!roomId || !collaborationService.isRoomJoined()) return;
-      collaborationService.boardCursorMove(roomType, roomId, x, y);
+      collaborationService.boardCursorMove(roomType, roomId, x, y, typing);
     },
     [roomId, roomType],
   );

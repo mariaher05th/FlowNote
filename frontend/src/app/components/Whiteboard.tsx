@@ -27,7 +27,7 @@ const noteColors    = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
 const penColors     = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
 const CURSOR_COLORS = ['#8070C8', '#C070A0', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'];
 
-interface RemoteCursor { x: number; y: number; nombre: string; color: string; }
+interface RemoteCursor { x: number; y: number; nombre: string; color: string; typing: boolean; }
 
 const getCursorColor = (userId: string): string => {
   let h = 0;
@@ -132,6 +132,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const lockRenewRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const draggingItemId = useRef<string | null>(null);
   const cursorThrottle = useRef(0);
+  const cursorTimeouts = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const lastCursorPos = useRef({ x: 0.5, y: 0.5 });
+  const typingOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPresenciaLen = useRef(0);
   const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
 
@@ -258,10 +261,16 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       if (field === 'contenido') applyRemoteBoard(value);
     },
     onRemoteDrawing: (mode, payload) => handleRemoteDrawing(mode, payload),
-    onRemoteCursor: (x, y, userId, nombre) => {
+    onRemoteCursor: (x, y, userId, nombre, typing) => {
+      console.log('[WB] onRemoteCursor', { userId, nombre, typing, x, y });
+      if (cursorTimeouts.current[userId]) clearTimeout(cursorTimeouts.current[userId]);
+      cursorTimeouts.current[userId] = setTimeout(() => {
+        setRemoteCursors(prev => { const n = { ...prev }; delete n[userId]; return n; });
+        delete cursorTimeouts.current[userId];
+      }, typing ? 5000 : 3000);
       setRemoteCursors(prev => ({
         ...prev,
-        [userId]: { x, y, nombre, color: getCursorColor(userId) },
+        [userId]: { x, y, nombre, color: getCursorColor(userId), typing },
       }));
     },
   });
@@ -331,19 +340,48 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   useEffect(() => { itemsRef.current = items; }, [items]);
 
-  // Sync cursor list when presence changes: remove stale cursors + re-broadcast for new joiners
+  // Limpiar timeouts de cursor al desmontar
+  useEffect(() => {
+    return () => { Object.values(cursorTimeouts.current).forEach(clearTimeout); };
+  }, []);
+
+  // Broadcast estado "escribiendo" cuando empieza/termina edición
+  useEffect(() => {
+    console.log('[WB] editingId effect', { editingId, noteId, collabRoomReady });
+    if (!noteId || !collabRoomReady) return;
+    if (editingId) {
+      const item = itemsRef.current.find(i => i.id === editingId);
+      if (item && containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const x = Math.max(0, Math.min(1, (item.x + item.width / 2) / rect.width));
+          const y = Math.max(0, Math.min(1, (item.y + item.height / 2) / rect.height));
+          lastCursorPos.current = { x, y };
+          console.log('[WB] broadcastCursor typing=true', { x, y });
+          broadcastCursor(x, y, true);
+        }
+      }
+    } else {
+      if (typingOffTimer.current) clearTimeout(typingOffTimer.current);
+      console.log('[WB] broadcastCursor typing=false');
+      broadcastCursor(lastCursorPos.current.x, lastCursorPos.current.y, false);
+    }
+  }, [editingId, noteId, collabRoomReady, broadcastCursor]);
+
+  // Refrescar estado "escribiendo" en cada keystroke
+  useEffect(() => {
+    if (!editingId || !noteId || !collabRoomReady) return;
+    broadcastCursor(lastCursorPos.current.x, lastCursorPos.current.y, true);
+    if (typingOffTimer.current) clearTimeout(typingOffTimer.current);
+    typingOffTimer.current = setTimeout(() => {
+      broadcastCursor(lastCursorPos.current.x, lastCursorPos.current.y, false);
+    }, 2500);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editText]);
+
+  // Re-broadcast al tablero cuando se une alguien nuevo
   useEffect(() => {
     const others = collabPresencia.filter(p => String(p.userId ?? '') !== miUserId);
-    // Remove cursors of users who left
-    const activeIds = new Set(others.map(p => String(p.userId ?? '')));
-    setRemoteCursors(prev => {
-      const next: Record<string, RemoteCursor> = {};
-      for (const [id, cur] of Object.entries(prev)) {
-        if (activeIds.has(id)) next[id] = cur;
-      }
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
-    });
-    // When a new user joins, editors re-broadcast their current board so the newcomer syncs
     if (others.length > prevPresenciaLen.current && collabRoomReady && isLoaded.current && puedeEditar) {
       broadcastBoard(itemsRef.current, strokesRef.current);
     }
@@ -502,6 +540,20 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Broadcast cursor siempre que el mouse se mueva sobre el canvas (16ms throttle)
+    if (noteId && collabRoomReady) {
+      const now = Date.now();
+      if (now - cursorThrottle.current > 16) {
+        cursorThrottle.current = now;
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect && rect.width > 0 && rect.height > 0) {
+          const cx = (e.clientX - rect.left) / rect.width;
+          const cy = (e.clientY - rect.top) / rect.height;
+          lastCursorPos.current = { x: cx, y: cy };
+          broadcastCursor(cx, cy);
+        }
+      }
+    }
     if (!drawing || !currentStroke.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -592,17 +644,16 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   };
 
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    // Broadcast cursor to collaborators throttled at ~50ms
     if (noteId && collabRoomReady) {
       const now = Date.now();
-      if (now - cursorThrottle.current > 50) {
+      if (now - cursorThrottle.current > 16) {
         cursorThrottle.current = now;
         const rect = containerRef.current?.getBoundingClientRect();
         if (rect && rect.width > 0 && rect.height > 0) {
-          broadcastCursor(
-            (e.clientX - rect.left) / rect.width,
-            (e.clientY - rect.top) / rect.height,
-          );
+          const cx = (e.clientX - rect.left) / rect.width;
+          const cy = (e.clientY - rect.top) / rect.height;
+          lastCursorPos.current = { x: cx, y: cy };
+          broadcastCursor(cx, cy);
         }
       }
     }
@@ -1386,6 +1437,20 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         ))}
 
         {/* ── CURSORES REMOTOS ── */}
+        <style>{`
+          @keyframes wbTypingGlow {
+            0%, 100% { box-shadow: 0 0 0 2px var(--wb-cursor-color, #8070C8)40, 0 0 0 5px var(--wb-cursor-color, #8070C8)20, 0 2px 10px rgba(0,0,0,0.25); }
+            50%       { box-shadow: 0 0 0 3px var(--wb-cursor-color, #8070C8)60, 0 0 0 9px var(--wb-cursor-color, #8070C8)15, 0 2px 14px rgba(0,0,0,0.3); }
+          }
+          @keyframes wbDotBounce {
+            0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+            40%           { transform: translateY(-4px); opacity: 1; }
+          }
+          .wb-typing-ball { animation: wbTypingGlow 1s ease-in-out infinite; }
+          .wb-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: wbDotBounce 1.1s ease-in-out infinite; }
+          .wb-dot:nth-child(2) { animation-delay: 0.18s; }
+          .wb-dot:nth-child(3) { animation-delay: 0.36s; }
+        `}</style>
         {(Object.entries(remoteCursors) as [string, RemoteCursor][]).map(([userId, cursor]) => (
           <div key={userId} style={{
             position: 'absolute',
@@ -1393,32 +1458,65 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             top: `${cursor.y * 100}%`,
             pointerEvents: 'none',
             zIndex: 200,
-            transform: 'translate(-4px, -4px)',
-            transition: 'left 0.06s linear, top 0.06s linear',
+            transform: 'translate(-50%, -50%)',
+            transition: 'left 0.06s ease-out, top 0.06s ease-out',
+            willChange: 'left, top',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '4px',
           }}>
-            <svg width="16" height="20" viewBox="0 0 16 20" style={{ display: 'block' }}>
-              <path d="M0 0 L0 16 L4 12 L8 20 L10 19 L6 11 L12 11 Z"
-                fill={cursor.color} stroke="#FFFFFF" strokeWidth="1.5" strokeLinejoin="round" />
-            </svg>
-            <div style={{
-              position: 'absolute', top: '16px', left: '12px',
-              display: 'flex', alignItems: 'center', gap: '4px',
-              backgroundColor: cursor.color,
-              borderRadius: '12px', padding: '2px 8px 2px 3px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.18)', whiteSpace: 'nowrap',
-            }}>
-              <div style={{
-                width: '20px', height: '20px', borderRadius: '50%',
-                backgroundColor: 'rgba(255,255,255,0.25)',
+            {/* Bolita principal */}
+            <div
+              className={cursor.typing ? 'wb-typing-ball' : undefined}
+              style={{
+                '--wb-cursor-color': cursor.color,
+                width: cursor.typing ? '36px' : '32px',
+                height: cursor.typing ? '36px' : '32px',
+                borderRadius: '50%',
+                backgroundColor: cursor.color,
+                border: '2.5px solid #FFFFFF',
+                boxShadow: cursor.typing
+                  ? undefined
+                  : `0 0 0 2px ${cursor.color}40, 0 2px 10px rgba(0,0,0,0.25)`,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '0.6rem', fontWeight: 700, color: '#FFFFFF',
-              }}>
-                {cursor.nombre.charAt(0).toUpperCase()}
-              </div>
-              <span style={{ fontSize: '0.68rem', fontWeight: 500, color: '#FFFFFF' }}>
-                {cursor.nombre.split(' ')[0]}
-              </span>
+                fontSize: cursor.typing ? '1rem' : '0.75rem',
+                fontWeight: 700, color: '#FFFFFF',
+                transition: 'width 0.2s, height 0.2s, font-size 0.2s',
+              } as React.CSSProperties}
+            >
+              {cursor.typing ? '✍️' : cursor.nombre.charAt(0).toUpperCase()}
             </div>
+            {/* Etiqueta / puntos de escritura */}
+            {cursor.typing ? (
+              <div style={{
+                backgroundColor: cursor.color,
+                color: '#FFFFFF',
+                fontSize: '0.65rem',
+                padding: '3px 8px',
+                borderRadius: '8px',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                display: 'flex', alignItems: 'center', gap: '3px',
+              }}>
+                <span className="wb-dot" />
+                <span className="wb-dot" />
+                <span className="wb-dot" />
+              </div>
+            ) : (
+              <div style={{
+                backgroundColor: cursor.color,
+                color: '#FFFFFF',
+                fontSize: '0.65rem',
+                fontWeight: 600,
+                padding: '2px 7px',
+                borderRadius: '8px',
+                whiteSpace: 'nowrap',
+                boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+                letterSpacing: '0.02em',
+              }}>
+                {cursor.nombre.split(' ')[0]}
+              </div>
+            )}
           </div>
         ))}
       </div>
