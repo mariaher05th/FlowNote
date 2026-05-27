@@ -709,6 +709,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       setReminderModal(false); setRemTitulo(''); setRemDesc(''); setRemFecha(''); setRemHora('09:00');
       setRemExito(true);
       setTimeout(() => setRemExito(false), 3000);
+      if (noteId) api.get(`/reminders/nota/${noteId}`).then(r => setNoteReminders(r.data)).catch(() => {});
     } finally { setRemCreando(false); }
   };
 
@@ -914,6 +915,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         await api.post('/reminders', { nota_id: noteId || '', mensaje: titulo || 'Recordatorio', fecha_hora: new Date(`${fecha}T${hora}:00`).toISOString() });
         setComandoFeedback({ ok: true, msg: `🔔 "${titulo || 'Recordatorio'}" · ${mRec[2]} ${hora}` });
         setRemExito(true); setTimeout(() => setRemExito(false), 3000);
+        if (noteId) api.get(`/reminders/nota/${noteId}`).then(r => setNoteReminders(r.data)).catch(() => {});
       } catch { setComandoFeedback({ ok: false, msg: 'No se pudo crear el recordatorio.' }); }
       return true;
     }
