@@ -152,6 +152,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const draggingItemId = useRef<string | null>(null);
 
   const [boardMode, setBoardMode] = useState<'libre' | 'organizado'>('libre');
+  const [drawOnOrganized, setDrawOnOrganized] = useState(false);
+
+  // Cuando el canvas monta en modo organizado, redibuja los trazos existentes
+  useEffect(() => {
+    if (drawOnOrganized) replayStrokes(strokesRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawOnOrganized]);
   const [noteReminders, setNoteReminders] = useState<any[]>([]);
 
   // Modales
@@ -643,6 +650,13 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 };
   const deleteItem = (id: string) => { setItems(prev => prev.filter(i => i.id !== id)); setSelectedId(null); };
 
+  const clearCanvas = () => {
+    strokesRef.current = [];
+    const canvas = canvasRef.current;
+    if (canvas) canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+    setCanvasVer(v => v + 1);
+  };
+
   const cycleStatus = (id: string) => {
     const cycle: CanvasItem['status'][] = ['pendiente', 'en_proceso', 'finalizada'];
     setItems(prev => prev.map(i => {
@@ -666,9 +680,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   // ── Crear tarea ──
   const crearTarea = () => {
     if (!taskTitulo.trim()) return;
-    const rect = containerRef.current?.getBoundingClientRect();
-    const x = rect ? rect.width / 2 - 120 : 100;
-    const y = rect ? rect.height / 2 - 50 : 100;
+    const { x, y } = findFreePos(240, 90);
     const newTask: CanvasItem = {
       id: Date.now().toString(),
       type: 'task', x, y,
@@ -781,9 +793,29 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
 
   // Posición central del canvas para nuevos items
-  const centroCanvas = (w = 220, h = 100) => {
+  const findFreePos = (w: number, h: number) => {
     const r = containerRef.current?.getBoundingClientRect();
-    return { x: r ? r.width / 2 - w / 2 : 150, y: r ? r.height / 2 - h / 2 : 150 };
+    const cw = r?.width ?? 800;
+    const ch = r?.height ?? 600;
+    const M = 18; // margin between items
+    const cx = Math.max(M, (cw - w) / 2);
+    const cy = Math.max(M, (ch - h) / 2);
+    const overlaps = (x: number, y: number) =>
+      itemsRef.current.some(it =>
+        x < it.x + it.width + M && x + w + M > it.x &&
+        y < it.y + it.height + M && y + h + M > it.y,
+      );
+    if (!overlaps(cx, cy)) return { x: cx, y: cy };
+    for (let radius = 40; radius < 600; radius += 36) {
+      for (let a = 0; a < 12; a++) {
+        const angle = (a / 12) * Math.PI * 2;
+        const tx = Math.max(M, Math.min(cw - w - M, cx + Math.cos(angle) * radius));
+        const ty = Math.max(M, Math.min(ch - h - M, cy + Math.sin(angle) * radius));
+        if (!overlaps(tx, ty)) return { x: tx, y: ty };
+      }
+    }
+    const n = itemsRef.current.length;
+    return { x: M + (n % 5) * (w + M), y: M + Math.floor(n / 5) * (h + M) };
   };
 
   // Busca el colaborador que más se acerca al texto hablado (username o nombre)
@@ -831,7 +863,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     // "crea una nota rapida", "anota que...", "nota rapida de...", etc.
     if (/\b(nota\s+rapida|anota(?:r)?|crea(?:r)?\s+(?:una?\s+)?nota|agrega(?:r)?\s+(?:una?\s+)?nota|escribe?\s+(?:una?\s+)?nota)\b/.test(t)) {
       const contenido = tras(/.*?\b(?:nota\s+rapida\s*(?:de\s+|sobre\s+|con\s+)?|anota(?:r)?\s*(?:que\s+)?|crea(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+|que\s+diga\s+)?|agrega(?:r)?\s+(?:una?\s+)?nota\s*(?:rapida\s*)?(?:de\s+|sobre\s+|con\s+)?|escribe?\s+(?:una?\s+)?nota\s*(?:que\s+diga\s+)?)/);
-      const { x, y } = centroCanvas(200, 140);
+      const { x, y } = findFreePos(200, 140);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'note', x, y, width: 200, height: 140, content: contenido || '...', color: '#FFF8E7' }]);
       setComandoFeedback({ ok: true, msg: contenido ? `📝 Nota: "${contenido}"` : '📝 Nota creada' });
       setTool('select');
@@ -852,7 +884,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         const hablado = t.slice(splitPos + sepLen).replace(/^@/, '').trim();
         const titulo = antesAsig.replace(/.*?\btarea\s*(?:de\s+|la\s+|una?\s+)?/, '').trim() || 'Nueva tarea';
         const { username, nombre } = resolverAsignado(hablado);
-        const { x, y } = centroCanvas(240, 90);
+        const { x, y } = findFreePos(240, 90);
         setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', asignadoA: username, color: '' }]);
         setComandoFeedback({ ok: true, msg: `✅ Tarea "${titulo}" → ${nombre} (@${username})` });
         setTool('select');
@@ -864,7 +896,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     // "crea una tarea de compras", "necesito hacer...", "pendiente:..."
     if (/\b(crea(?:r)?\s+(?:una?\s+)?tarea|agrega(?:r)?\s+(?:una?\s+)?tarea|necesito\s+(?:hacer|recordar)|pendiente:|tarea:)\b/.test(t)) {
       const titulo = tras(/.*?\b(?:crea(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|agrega(?:r)?\s+(?:una?\s+)?tarea\s*(?:de\s+)?|necesito\s+(?:hacer|recordar)\s+|pendiente:\s*|tarea:\s*)/) || 'Nueva tarea';
-      const { x, y } = centroCanvas(240, 90);
+      const { x, y } = findFreePos(240, 90);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'task', x, y, width: 240, height: 90, content: titulo, status: 'pendiente', color: '' }]);
       setComandoFeedback({ ok: true, msg: `✅ Tarea: "${titulo}"` });
       setTool('select');
@@ -891,7 +923,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     if (/\b(escribe?\s+(?:en\s+el\s+tablero|texto)|agrega(?:r)?\s+(?:un\s+)?texto|pon(?:er)?\s+(?:el\s+)?texto)\b/.test(t)) {
       const contenido = tras(/.*?\b(?:escribe?\s+(?:en\s+el\s+tablero\s+|texto\s+)?|agrega(?:r)?\s+(?:un\s+)?texto\s*(?:que\s+diga\s+)?|pon(?:er)?\s+(?:el\s+)?texto\s*)/);
       if (!contenido) return false;
-      const { x, y } = centroCanvas(200, 50);
+      const { x, y } = findFreePos(200, 50);
       setItems(prev => [...prev, { id: Date.now().toString(), type: 'text', x, y, width: 220, height: 50, content: contenido, color: 'transparent' }]);
       setComandoFeedback({ ok: true, msg: `💬 Texto: "${contenido}"` });
       setTool('select');
@@ -1156,8 +1188,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         <SectionLabel>Dibujo</SectionLabel>
         <div style={{ display: 'flex', gap: '2px', backgroundColor: 'var(--app-bg)', borderRadius: '10px', padding: '3px' }}>
           <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Seleccionar">↖</ToolBtn>
-          <ToolBtn active={tool === 'pen'} onClick={() => setTool('pen')} title="Lápiz">✏️</ToolBtn>
-          <ToolBtn active={tool === 'eraser'} onClick={() => setTool('eraser')} title="Borrar">⬜</ToolBtn>
+          <ToolBtn active={tool === 'pen'} onClick={() => { setTool('pen'); if (boardMode === 'organizado') setDrawOnOrganized(true); }} title="Lápiz">✏️</ToolBtn>
+          <ToolBtn active={tool === 'eraser'} onClick={() => { setTool('eraser'); if (boardMode === 'organizado') setDrawOnOrganized(true); }} title="Borrar">⬜</ToolBtn>
+          <ToolBtn active={false} onClick={clearCanvas} title="Limpiar lienzo">🗑️</ToolBtn>
         </div>
 
         {tool === 'pen' && (
@@ -1244,21 +1277,21 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         }}>
           <ToolBtn
             active={boardMode === 'libre'}
-            onClick={() => setBoardMode('libre')}
+            onClick={() => { setBoardMode('libre'); setDrawOnOrganized(false); setTool('select'); }}
             title="Tablero libre"
           >
             <span style={{ fontSize: '0.72rem', fontWeight: 500 }}>Libre</span>
           </ToolBtn>
           <ToolBtn
             active={boardMode === 'organizado'}
-            onClick={() => setBoardMode('organizado')}
+            onClick={() => { setBoardMode('organizado'); setDrawOnOrganized(false); setTool('select'); }}
             title="Tablero organizado"
           >
             <span style={{ fontSize: '0.72rem', fontWeight: 500 }}>Organizado</span>
           </ToolBtn>
         </div>
-        <Sep />
 
+        <Sep />
 
         {/* Exportar */}
         <div ref={exportBtnRef}>
@@ -1343,27 +1376,46 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
         )}
       </div>
 
-      {boardMode === 'organizado' ? (
-        <StructuredBoard
-          items={items}
-          reminders={noteReminders}
-          puedeEditar={puedeEditar}
-          onUpdateItem={(id, changes) =>
-            setItems(prev => prev.map(i => i.id === id ? { ...i, ...changes } : i))
-          }
-          onDeleteItem={(id) => {
-            setItems(prev => prev.filter(i => i.id !== id));
-            setSelectedId(null);
-          }}
-          onAddItem={(item) =>
-            setItems(prev => [...prev, { ...item, id: Date.now().toString() }])
-          }
-        />
-      ) : (
+      <style>{`@keyframes sbFadeIn { from { opacity: 0; transform: scale(0.987); } to { opacity: 1; transform: scale(1); } }`}</style>
 
-      // {/* ── CANVAS ── */}
+      {/* ── MODO ORGANIZADO sin dibujo: solo las zonas ── */}
+      {boardMode === 'organizado' && !drawOnOrganized && (
+        <div style={{ flex: 1, overflow: 'hidden', animation: 'sbFadeIn 0.22s ease' }}>
+          <StructuredBoard
+            items={items}
+            reminders={noteReminders}
+            puedeEditar={puedeEditar}
+            isDrawing={false}
+            onUpdateItem={(id, changes) =>
+              setItems(prev => prev.map(i => i.id === id ? { ...i, ...changes } : i))
+            }
+            onDeleteItem={(id) => {
+              setItems(prev => prev.filter(i => i.id !== id));
+              setSelectedId(null);
+            }}
+            onAddItem={(item) =>
+              setItems(prev => [...prev, { ...item, id: Date.now().toString() }])
+            }
+          />
+        </div>
+      )}
+
+      {/* ── CANVAS: siempre en modo libre, o en modo organizado+dibujo ── */}
+      {(boardMode === 'libre' || drawOnOrganized) && (
       <div ref={containerRef} style={{ flex: 1, position: 'relative', overflow: 'hidden', cursor: tool === 'pen' || tool === 'eraser' ? 'crosshair' : 'default' }}
         onClick={handleCanvasClick} onMouseMove={onMouseMove} onMouseUp={stopDrag}>
+
+        {/* Barra de retorno al tablero organizado */}
+        {drawOnOrganized && (
+          <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 14px', backgroundColor: 'rgba(246,244,251,0.96)', borderBottom: '1.5px solid #C8B8F0', backdropFilter: 'blur(6px)' }}>
+            <button
+              onClick={() => { setDrawOnOrganized(false); setTool('select'); }}
+              style={{ padding: '4px 16px', borderRadius: '10px', border: '1.5px solid #C8B8F0', backgroundColor: '#FFFFFF', color: '#8070C8', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
+            >
+              ← Volver al tablero organizado
+            </button>
+          </div>
+        )}
 
         {/* Fondo punteado */}
         <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}>
@@ -1380,8 +1432,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           }}
           onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw} />
 
-        {/* Items */}
-        {items.map(item => (
+        {/* Items — solo modo libre */}
+        {boardMode === 'libre' && items.map(item => (
           <div key={item.id} style={{ position: 'absolute', left: item.x, top: item.y, width: item.width, height: item.height, cursor: tool === 'select' ? (dragging?.id === item.id ? 'grabbing' : 'grab') : 'default', userSelect: 'none' }} onMouseDown={e => startDrag(e, item.id)}>
 
             {/* Sticky note */}
@@ -1437,7 +1489,9 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
             )}
           </div>
         ))}
-      </div> )}
+
+      </div>
+      )}
 
       {/* ── SPEECH TO TEXT ── */}
       {speechOpen && (
