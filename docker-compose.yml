@@ -7,8 +7,8 @@ services:
       MONGO_INITDB_DATABASE: flownote
     volumes:
       - db_data:/data/db
-    ports:
-      - "27017:27017"
+    expose:
+      - "27017"
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -28,18 +28,20 @@ services:
       PORT: 3000
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 7d
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
 
   frontend:
     container_name: flownote_frontend
     build:
       context: ./frontend/
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL}
     depends_on:
       - backend
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
 
 volumes:
   db_data:
