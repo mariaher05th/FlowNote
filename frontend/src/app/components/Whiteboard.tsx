@@ -968,49 +968,100 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     finalTranscriptRef.current = '';
     interimTranscriptRef.current = '';
 
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'es-CO';
-    recognition.continuous = true;
-    recognition.interimResults = true;
+    let fatalError = false;
+    let restartAttempts = 0;
+    const MAX_RESTARTS = 20;
 
-    recognition.onresult = (event: any) => {
-      let interimText = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscriptRef.current += transcript + ' ';
-          ejecutarComandoVoz(finalTranscriptRef.current.trim()).then(esComando => {
-            if (esComando) stopSpeechRecording();
-          });
-        } else {
-          interimText += transcript;
+    const crearInstancia = () => {
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'es-CO';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 3;
+
+      recognition.onresult = (event: any) => {
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          // Pick the alternative with highest confidence
+          let best = event.results[i][0];
+          for (let j = 1; j < event.results[i].length; j++) {
+            if (event.results[i][j].confidence > best.confidence) best = event.results[i][j];
+          }
+          const transcript = best.transcript;
+          if (event.results[i].isFinal) {
+            finalTranscriptRef.current += transcript + ' ';
+            ejecutarComandoVoz(finalTranscriptRef.current.trim()).then(esComando => {
+              if (esComando) stopSpeechRecording();
+            });
+          } else {
+            interimText += transcript;
+          }
         }
-      }
-      interimTranscriptRef.current = interimText;
-      setSpeechText(`${finalTranscriptRef.current}${interimTranscriptRef.current}`.trim());
-    };
+        interimTranscriptRef.current = interimText;
+        setSpeechText(`${finalTranscriptRef.current}${interimTranscriptRef.current}`.trim());
+        restartAttempts = 0; // reset on successful speech
+      };
 
-    recognition.onerror = (event: any) => {
-      if (event.error === 'not-allowed') {
+      recognition.onerror = (event: any) => {
+        if (event.error === 'aborted') return;
+        if (event.error === 'no-speech') return;
+        if (event.error === 'network') return; // silently retry via onend
+        fatalError = true;
         recognitionRef.current = null;
         setSpeechListening(false);
-        setSpeechError('Permiso de micrófono denegado. Habilítalo en la configuración del navegador.');
-      }
+        if (event.error === 'not-allowed') {
+          setSpeechError('Permiso de micrófono denegado. Habilítalo en la configuración del navegador.');
+        } else if (event.error === 'audio-capture') {
+          setSpeechError('No se detectó micrófono. Verifica que esté conectado y habilitado.');
+        } else {
+          setSpeechError(`Error de reconocimiento (${event.error}). Presiona el micro para reintentar.`);
+        }
+      };
+
+      recognition.onend = () => {
+        // If this recognition was replaced or stopped intentionally, do nothing
+        if (recognitionRef.current !== recognition) return;
+        if (fatalError) return;
+        if (restartAttempts >= MAX_RESTARTS) {
+          setSpeechListening(false);
+          setSpeechError('El reconocimiento se detuvo. Presiona el micro para continuar.');
+          return;
+        }
+        restartAttempts++;
+        // Delay before restart to avoid Chrome rate-limiting
+        const delay = restartAttempts > 5 ? 600 : 150;
+        setTimeout(() => {
+          if (recognitionRef.current !== recognition) return;
+          try {
+            recognition.start();
+          } catch {
+            // Chrome sometimes won't restart the same object — create a fresh one
+            setTimeout(() => {
+              if (recognitionRef.current === recognition) {
+                const fresh = crearInstancia();
+                recognitionRef.current = fresh;
+                try { fresh.start(); } catch {
+                  setSpeechListening(false);
+                  setSpeechError('No se pudo retomar el reconocimiento. Presiona el micro.');
+                }
+              }
+            }, 300);
+          }
+        }, delay);
+      };
+
+      return recognition;
     };
 
-    recognition.onend = () => {
-      if (recognitionRef.current === recognition) {
-        try { recognition.start(); } catch {}
-      }
-    };
-
+    const recognition = crearInstancia();
     recognitionRef.current = recognition;
     try {
       recognition.start();
       setSpeechListening(true);
       setSpeechSupported(true);
+      setSpeechError('');
     } catch {
-      setSpeechError('No se pudo iniciar el reconocimiento de voz.');
+      setSpeechError('No se pudo iniciar el reconocimiento de voz. Intenta de nuevo.');
     }
   };
 
@@ -1019,6 +1070,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setSpeechOpen(true);
     setSpeechText('');
     setComandoFeedback(null);
+    finalTranscriptRef.current = '';
     iniciarReconocimiento();
   };
 
@@ -1026,14 +1078,15 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     setSpeechError('');
     setComandoFeedback(null);
     setSpeechText('');
+    finalTranscriptRef.current = '';
     iniciarReconocimiento();
   };
 
   const stopSpeechRecording = () => {
     setSpeechListening(false);
     const rec = recognitionRef.current;
-    recognitionRef.current = null; // limpiar antes de stop para que onend no reinicie
-    if (rec) rec.stop();
+    recognitionRef.current = null;
+    try { rec?.stop(); } catch {}
   };
 
   const closeSpeechBox = () => {
@@ -1545,12 +1598,14 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
                 <p style={{ margin: 0, color: '#2F2840', fontSize: '0.95rem', fontWeight: 500 }}>
                   Dictado por voz
                 </p>
-                <p style={{ margin: 0, color: '#B0A0C0', fontSize: '0.75rem' }}>
+                <p style={{ margin: 0, color: speechListening ? '#8070C8' : '#B0A0C0', fontSize: '0.75rem', fontWeight: speechListening ? 500 : 400 }}>
                   {speechListening
-                    ? 'Escuchando... di un comando o habla libremente'
+                    ? '🔴 Escuchando... habla ahora'
                     : speechLoading
                       ? 'Procesando audio...'
-                      : 'Puedes editar el texto antes de insertarlo'}
+                      : speechError
+                        ? 'Micrófono detenido'
+                        : 'Puedes editar el texto antes de insertarlo'}
                 </p>
                 {speechListening && (
                   <p style={{ margin: '2px 0 0', color: '#8070C8', fontSize: '0.7rem', fontWeight: 300 }}>
@@ -1593,8 +1648,16 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
           )}
 
           {speechError && (
-            <div style={{ padding: '8px 10px', backgroundColor: '#FDE2E8', color: '#A8324E', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '10px' }}>
-              {speechError}
+            <div style={{ padding: '8px 12px', backgroundColor: '#FDE2E8', color: '#A8324E', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <span>{speechError}</span>
+              {!speechError.includes('denegado') && !speechError.includes('micrófono') && (
+                <button
+                  onClick={reanudarEscucha}
+                  style={{ flexShrink: 0, padding: '3px 10px', borderRadius: '8px', border: 'none', backgroundColor: '#A8324E', color: '#fff', cursor: 'pointer', fontSize: '0.78rem', fontWeight: 600 }}
+                >
+                  Reintentar
+                </button>
+              )}
             </div>
           )}
 
