@@ -15,6 +15,7 @@ export interface UseCollaborationOptions {
   onRemoteNoteUpdate?: (field: string, value: unknown, fromUserId: string) => void;
   onRemoteDrawing?: (mode: string, payload: Record<string, unknown>, fromUserId: string) => void;
   onRemoteComment?: (action: 'add' | 'update' | 'delete', data: Record<string, unknown>, fromUserId: string) => void;
+  onRemoteCursor?: (x: number, y: number, userId: string, nombre: string) => void;
 }
 
 function normId(id?: string | null): string {
@@ -29,6 +30,7 @@ export function useCollaboration({
   onRemoteNoteUpdate,
   onRemoteDrawing,
   onRemoteComment,
+  onRemoteCursor,
 }: UseCollaborationOptions) {
   const [connected, setConnected] = useState(false);
   const [roomReady, setRoomReady] = useState(false);
@@ -37,13 +39,15 @@ export function useCollaboration({
   const [locks, setLocks] = useState<ActiveLock[]>([]);
   const currentUserId = useRef<string | null>(null);
 
-  const noteCb = useRef(onRemoteNoteUpdate);
-  const drawCb = useRef(onRemoteDrawing);
+  const noteCb    = useRef(onRemoteNoteUpdate);
+  const drawCb    = useRef(onRemoteDrawing);
   const commentCb = useRef(onRemoteComment);
+  const cursorCb  = useRef(onRemoteCursor);
 
-  noteCb.current = onRemoteNoteUpdate;
-  drawCb.current = onRemoteDrawing;
+  noteCb.current    = onRemoteNoteUpdate;
+  drawCb.current    = onRemoteDrawing;
   commentCb.current = onRemoteComment;
+  cursorCb.current  = onRemoteCursor;
 
   const isSelf = useCallback((userId?: string) => {
     if (!userId || !currentUserId.current) return false;
@@ -173,6 +177,11 @@ export function useCollaboration({
         commentCb.current?.(action, data, userId ?? '');
       };
 
+    const onBoardCursor = (msg: { userId?: string; nombre?: string; x?: number; y?: number }) => {
+      if (isSelf(msg.userId)) return;
+      cursorCb.current?.(msg.x ?? 0, msg.y ?? 0, msg.userId ?? '', msg.nombre ?? '');
+    };
+
     const onLockAcquired = (raw: Record<string, unknown>) => upsertLock(raw);
 
     const onLockReleased = (data: { resourceType: string; resourceId: string }) => {
@@ -209,6 +218,7 @@ export function useCollaboration({
     socket.on(COLLAB_EVENTS.commentAdded, onComment('add'));
     socket.on(COLLAB_EVENTS.commentUpdated, onComment('update'));
     socket.on(COLLAB_EVENTS.commentDeleted, onComment('delete'));
+    socket.on(COLLAB_EVENTS.board_cursor, onBoardCursor);
     socket.on(COLLAB_EVENTS.lockAcquired, onLockAcquired);
     socket.on(COLLAB_EVENTS.lockReleased, onLockReleased);
     socket.on('locks_snapshot', onLocksSnapshot);
@@ -240,6 +250,7 @@ export function useCollaboration({
       socket.off(COLLAB_EVENTS.drawingUpdated, onDrawing);
       socket.off(COLLAB_EVENTS.drawingStroke, onDrawing);
       socket.off(COLLAB_EVENTS.drawingCleared, onDrawing);
+      socket.off(COLLAB_EVENTS.board_cursor, onBoardCursor);
       socket.off(COLLAB_EVENTS.lockAcquired, onLockAcquired);
       socket.off(COLLAB_EVENTS.lockReleased, onLockReleased);
       socket.off('locks_snapshot', onLocksSnapshot);
@@ -258,6 +269,14 @@ export function useCollaboration({
     (stroke: Record<string, unknown>) => {
       if (!roomId || !collaborationService.isRoomJoined()) return;
       collaborationService.drawingUpdate(roomType, roomId, 'stroke', stroke);
+    },
+    [roomId, roomType],
+  );
+
+  const broadcastCursor = useCallback(
+    (x: number, y: number) => {
+      if (!roomId || !collaborationService.isRoomJoined()) return;
+      collaborationService.boardCursorMove(roomType, roomId, x, y);
     },
     [roomId, roomType],
   );
@@ -295,6 +314,7 @@ export function useCollaboration({
     isLockedByOther,
     broadcastBoard,
     broadcastStroke,
+    broadcastCursor,
     acquireResourceLock,
     releaseResourceLock,
   };

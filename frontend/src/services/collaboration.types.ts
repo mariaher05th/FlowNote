@@ -30,4 +30,5 @@ export const COLLAB_EVENTS = {
   lockReleased: 'lock_released',
   lockResult: 'lock_result',
   lockDenied: 'lock_denied',
+  board_cursor: 'board_cursor',
 } as const;

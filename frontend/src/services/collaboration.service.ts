@@ -326,6 +326,11 @@ class CollaborationService {
     this.connect().emit('drawing_update', { roomType, roomId, mode, payload });
   }
 
+  boardCursorMove(roomType: RoomType, roomId: string, x: number, y: number) {
+    if (!this.isRoomJoined() || !this.socket) return;
+    this.socket.emit('board_cursor', { roomType, roomId, x, y });
+  }
+
   on(event: string, handler: (...args: unknown[]) => void) {
     this.connect().on(event, handler);
   }

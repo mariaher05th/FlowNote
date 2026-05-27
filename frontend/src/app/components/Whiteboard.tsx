@@ -23,8 +23,17 @@ interface Stroke {
 
 interface Colaborador { usuario_id: string; username: string; nombre: string; rol: string; }
 
-const noteColors = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
-const penColors  = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
+const noteColors    = ['#FFF8E7', '#F0EEFF', '#FFE8F0', '#E8F5FF', '#E8FFE8'];
+const penColors     = ['#8070C8', '#C070A0', '#7090B8', '#508070', '#C07840', '#2F2840'];
+const CURSOR_COLORS = ['#8070C8', '#C070A0', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'];
+
+interface RemoteCursor { x: number; y: number; nombre: string; color: string; }
+
+const getCursorColor = (userId: string): string => {
+  let h = 0;
+  for (let i = 0; i < userId.length; i++) h = (h * 31 + userId.charCodeAt(i)) >>> 0;
+  return CURSOR_COLORS[h % CURSOR_COLORS.length];
+};
 /** Espacio lógico del tablero (coordenadas normalizadas para colaboración) */
 const BOARD_W = 2000;
 const BOARD_H = 2000;
@@ -86,6 +95,8 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const finalTranscriptRef = useRef('');
   const interimTranscriptRef = useRef('');
   const lastInsertPositionRef = useRef<{ x: number; y: number }>({ x: 120, y: 120 });
+  const skipNextBroadcast = useRef(true);   // true = skip broadcast from initial API load
+  const puedeEditarRef   = useRef(false);   // tracks puedeEditar for use in cleanup
 
   // Estado de la nota
   const [noteTitle,      setNoteTitle]      = useState('');
@@ -118,8 +129,11 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const [speechSupported, setSpeechSupported] = useState(true);
   const [comandoFeedback, setComandoFeedback] = useState<{ ok: boolean; msg: string } | null>(null);
   const [lockMsg,    setLockMsg]    = useState<string | null>(null);
-  const lockRenewRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lockRenewRef   = useRef<ReturnType<typeof setInterval> | null>(null);
   const draggingItemId = useRef<string | null>(null);
+  const cursorThrottle = useRef(0);
+  const prevPresenciaLen = useRef(0);
+  const [remoteCursors, setRemoteCursors] = useState<Record<string, RemoteCursor>>({});
 
   // Modales
   const [taskModal,     setTaskModal]     = useState(false);
@@ -148,6 +162,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const miUserId = String(user.id || user._id || '');
   const puedeEditar = ['admin', 'editor'].includes(miRol);
+  puedeEditarRef.current = puedeEditar;
   const rolLabel: Record<string, string> = {
     admin: 'Administrador', editor: 'Editor', revisor: 'Revisor',
   };
@@ -232,6 +247,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
     isLockedByOther,
     broadcastBoard,
     broadcastStroke,
+    broadcastCursor,
     acquireResourceLock,
     releaseResourceLock,
   } = useCollaboration({
@@ -242,6 +258,12 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       if (field === 'contenido') applyRemoteBoard(value);
     },
     onRemoteDrawing: (mode, payload) => handleRemoteDrawing(mode, payload),
+    onRemoteCursor: (x, y, userId, nombre) => {
+      setRemoteCursors(prev => ({
+        ...prev,
+        [userId]: { x, y, nombre, color: getCursorColor(userId) },
+      }));
+    },
   });
 
   const buildContenido = (currentItems: CanvasItem[]) =>
@@ -296,6 +318,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       setEsInvitado(!esAutor && !!yo);
       try {
         const data = JSON.parse(note.contenido || '{}');
+        skipNextBroadcast.current = true; // don't re-broadcast API data to other users
         setItems(Array.isArray(data?.items) ? data.items : []);
         if (Array.isArray(data?.strokes) && data.strokes.length > 0) {
           strokesRef.current = data.strokes;
@@ -308,6 +331,25 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   useEffect(() => { itemsRef.current = items; }, [items]);
 
+  // Sync cursor list when presence changes: remove stale cursors + re-broadcast for new joiners
+  useEffect(() => {
+    const others = collabPresencia.filter(p => String(p.userId ?? '') !== miUserId);
+    // Remove cursors of users who left
+    const activeIds = new Set(others.map(p => String(p.userId ?? '')));
+    setRemoteCursors(prev => {
+      const next: Record<string, RemoteCursor> = {};
+      for (const [id, cur] of Object.entries(prev)) {
+        if (activeIds.has(id)) next[id] = cur;
+      }
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    // When a new user joins, editors re-broadcast their current board so the newcomer syncs
+    if (others.length > prevPresenciaLen.current && collabRoomReady && isLoaded.current && puedeEditar) {
+      broadcastBoard(itemsRef.current, strokesRef.current);
+    }
+    prevPresenciaLen.current = others.length;
+  }, [collabPresencia, collabRoomReady, puedeEditar, broadcastBoard, miUserId]);
+
   useEffect(() => {
     if (!noteId || !isLoaded.current || remoteApplying.current || !puedeEditar) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
@@ -319,8 +361,10 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
       });
       setNoteEstado(nuevoEstado);
     }, 500);
-      
-    if (!collabRoomReady) return;    
+
+    if (!collabRoomReady) return;
+    // Skip broadcast when items come from the initial API load
+    if (skipNextBroadcast.current) { skipNextBroadcast.current = false; return; }
     if (collabTimer.current) clearTimeout(collabTimer.current);
     collabTimer.current = setTimeout(() => {
       broadcastBoard(itemsRef.current, strokesRef.current);
@@ -337,7 +381,7 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
 
   useEffect(() => {
     return () => {
-      if (noteId && isLoaded.current) {
+      if (noteId && isLoaded.current && puedeEditarRef.current) {
         if (saveTimer.current) clearTimeout(saveTimer.current);
 
         const nuevoEstado = calcularEstadoNota(itemsRef.current);
@@ -548,6 +592,20 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
   };
 
   const onMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Broadcast cursor to collaborators throttled at ~50ms
+    if (noteId && collabRoomReady) {
+      const now = Date.now();
+      if (now - cursorThrottle.current > 50) {
+        cursorThrottle.current = now;
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect && rect.width > 0 && rect.height > 0) {
+          broadcastCursor(
+            (e.clientX - rect.left) / rect.width,
+            (e.clientY - rect.top) / rect.height,
+          );
+        }
+      }
+    }
     if (resizing) {
       const dx = e.clientX - resizing.startX; const dy = e.clientY - resizing.startY;
       const { startItem: si, handle } = resizing; const MIN = 60;
@@ -1324,6 +1382,43 @@ export function Whiteboard({ noteId, onBack }: { noteId: string | null; onBack?:
                 <div key={h} onMouseDown={e => startResizeHandle(e, item.id, h)} style={{ position: 'absolute', top, left, width: 10, height: 10, borderRadius: '2px', backgroundColor: '#FFFFFF', border: '1.5px solid #8070C8', cursor, zIndex: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.2)' }} />
               ))
             )}
+          </div>
+        ))}
+
+        {/* ── CURSORES REMOTOS ── */}
+        {(Object.entries(remoteCursors) as [string, RemoteCursor][]).map(([userId, cursor]) => (
+          <div key={userId} style={{
+            position: 'absolute',
+            left: `${cursor.x * 100}%`,
+            top: `${cursor.y * 100}%`,
+            pointerEvents: 'none',
+            zIndex: 200,
+            transform: 'translate(-4px, -4px)',
+            transition: 'left 0.06s linear, top 0.06s linear',
+          }}>
+            <svg width="16" height="20" viewBox="0 0 16 20" style={{ display: 'block' }}>
+              <path d="M0 0 L0 16 L4 12 L8 20 L10 19 L6 11 L12 11 Z"
+                fill={cursor.color} stroke="#FFFFFF" strokeWidth="1.5" strokeLinejoin="round" />
+            </svg>
+            <div style={{
+              position: 'absolute', top: '16px', left: '12px',
+              display: 'flex', alignItems: 'center', gap: '4px',
+              backgroundColor: cursor.color,
+              borderRadius: '12px', padding: '2px 8px 2px 3px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.18)', whiteSpace: 'nowrap',
+            }}>
+              <div style={{
+                width: '20px', height: '20px', borderRadius: '50%',
+                backgroundColor: 'rgba(255,255,255,0.25)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '0.6rem', fontWeight: 700, color: '#FFFFFF',
+              }}>
+                {cursor.nombre.charAt(0).toUpperCase()}
+              </div>
+              <span style={{ fontSize: '0.68rem', fontWeight: 500, color: '#FFFFFF' }}>
+                {cursor.nombre.split(' ')[0]}
+              </span>
+            </div>
           </div>
         ))}
       </div>
